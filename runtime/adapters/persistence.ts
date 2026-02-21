@@ -1,11 +1,22 @@
 import type {
+  CycleControlRecord,
+  CycleMembershipRecord,
   CycleSnapshotArtifactRecord,
   CycleSnapshotRecord,
   IngestRecord,
   IngestState,
+  LabRecordEntry,
+  ParticipantRecord,
+  PublishTxnInput,
+  PublishTxnResult,
   ProgramCycleRecord,
   ProgramCycleState,
   ProtectedActionAuditRecord,
+  RuntimeControlRecord,
+  RuntimeThreadRecord,
+  SessionContextRecord,
+  SourceSubmissionRecord,
+  StarterBriefRecord,
 } from "../core/types.js";
 
 export interface IngestStateUpdate {
@@ -38,7 +49,75 @@ export interface PersistenceAdapter {
     record: Omit<ProtectedActionAuditRecord, "audit_id" | "created_at"> & { audit_id?: string; created_at?: string },
   ): Promise<ProtectedActionAuditRecord>;
 
-  getProgramCycle(organizationId: string, programCycleId: string): Promise<ProgramCycleRecord | null>;
+  getRuntimeControl(): Promise<RuntimeControlRecord>;
+
+  getCycleControl(organizationId: string, cycleId: string): Promise<CycleControlRecord | null>;
+
+  upsertCycleControl(
+    record: Omit<CycleControlRecord, "updated_at"> & { updated_at?: string },
+  ): Promise<CycleControlRecord>;
+
+  getParticipantByEmailCanonical(emailCanonical: string): Promise<ParticipantRecord | null>;
+
+  getParticipantById(participantId: string): Promise<ParticipantRecord | null>;
+
+  upsertParticipant(
+    record: Omit<ParticipantRecord, "created_at"> & { created_at?: string },
+  ): Promise<ParticipantRecord>;
+
+  updateParticipantLastLogin(participantId: string, lastLoginAt: string): Promise<ParticipantRecord | null>;
+
+  getCycleMembership(participantId: string, organizationId: string, cycleId: string): Promise<CycleMembershipRecord | null>;
+
+  upsertCycleMembership(
+    record: Omit<CycleMembershipRecord, "joined_at" | "updated_at"> & { joined_at?: string; updated_at?: string },
+  ): Promise<CycleMembershipRecord>;
+
+  activateMembership(participantId: string, organizationId: string, cycleId: string, updatedAt: string): Promise<CycleMembershipRecord | null>;
+
+  getSessionContext(participantId: string): Promise<SessionContextRecord | null>;
+
+  setSessionActiveCycle(participantId: string, cycleId: string, updatedAt: string): Promise<SessionContextRecord>;
+
+  getThreadById(threadId: string): Promise<RuntimeThreadRecord | null>;
+
+  getThreadByIdInCycle(threadId: string, cycleId: string): Promise<RuntimeThreadRecord | null>;
+
+  upsertThread(record: Omit<RuntimeThreadRecord, "created_at" | "updated_at"> & { created_at?: string; updated_at?: string }): Promise<RuntimeThreadRecord>;
+
+  insertSourceSubmission(
+    record: Omit<SourceSubmissionRecord, "source_submission_id" | "created_at"> & { source_submission_id?: string; created_at?: string },
+  ): Promise<SourceSubmissionRecord>;
+
+  insertStarterBrief(
+    record: Omit<StarterBriefRecord, "starter_brief_id" | "created_at" | "updated_at"> & {
+      starter_brief_id?: string;
+      created_at?: string;
+      updated_at?: string;
+    },
+  ): Promise<StarterBriefRecord>;
+
+  updateStarterBrief(
+    starterBriefId: string,
+    update: {
+      status: StarterBriefRecord["status"];
+      payload?: Record<string, unknown>;
+      replay_payload?: Record<string, unknown>;
+      updated_at?: string;
+    },
+  ): Promise<StarterBriefRecord | null>;
+
+  listVisibleThreads(participantId: string, cycleId: string): Promise<RuntimeThreadRecord[]>;
+
+  listVisibleSources(participantId: string, cycleId: string): Promise<SourceSubmissionRecord[]>;
+
+  listVisibleStarterBriefs(participantId: string, cycleId: string): Promise<StarterBriefRecord[]>;
+
+  listVisibleLabRecord(cycleId: string): Promise<LabRecordEntry[]>;
+
+  publishLabRecordTxn(input: PublishTxnInput): Promise<PublishTxnResult>;
+
+  getProgramCycle(organizationId: string, cycleId: string): Promise<ProgramCycleRecord | null>;
 
   getActiveProgramCycle(organizationId: string): Promise<ProgramCycleRecord | null>;
 
@@ -48,11 +127,11 @@ export interface PersistenceAdapter {
 
   setProgramCycleState(
     organizationId: string,
-    programCycleId: string,
+    cycleId: string,
     state: ProgramCycleState,
     update: {
       activated_at?: string;
-      frozen_at?: string;
+      locked_at?: string;
       archived_at?: string;
       updated_at?: string;
     },
@@ -76,7 +155,7 @@ export interface PersistenceAdapter {
     },
   ): Promise<CycleSnapshotRecord | null>;
 
-  listCycleSnapshots(organizationId: string, programCycleId: string): Promise<CycleSnapshotRecord[]>;
+  listCycleSnapshots(organizationId: string, cycleId: string): Promise<CycleSnapshotRecord[]>;
 
   insertCycleSnapshotArtifact(
     record: Omit<CycleSnapshotArtifactRecord, "artifact_id" | "created_at"> & { artifact_id?: string; created_at?: string },

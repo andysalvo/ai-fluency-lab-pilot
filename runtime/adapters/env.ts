@@ -1,4 +1,4 @@
-import type { AllowlistState, ParticipantRole } from "../core/types.js";
+import type { GlobalRole, ParticipantRole } from "../core/types.js";
 
 export type PersistenceBackend = "inmemory" | "supabase";
 
@@ -7,24 +7,31 @@ export interface RuntimeConfig {
   active_ingress_mode: string;
   ingress_mode_source: string;
   allowed_event_types: string[];
-  stub_allowlist_state: AllowlistState;
+  default_global_role: GlobalRole;
   stub_role: ParticipantRole;
   supabase_url?: string;
   supabase_service_role_key?: string;
   operator_email?: string;
   organization_id: string;
   program_label: string;
-  program_cycle_id: string;
+  default_cycle_id: string;
   root_problem_version_id: string;
+  focus_snapshot: string;
   default_model: string;
+  openai_api_key?: string;
+  notion_integration_token?: string;
+  notion_api_base_url: string;
+  notion_root_page_url?: string;
+  notion_db_research_inbox_id?: string;
+  notion_db_team_intake_id?: string;
 }
 
-function asAllowlistState(value: string | undefined): AllowlistState {
-  if (value === "allowlisted" || value === "active" || value === "suspended" || value === "revoked") {
+function asGlobalRole(value: string | undefined): GlobalRole {
+  if (value === "member" || value === "operator" || value === "admin") {
     return value;
   }
 
-  return "allowlisted";
+  return "member";
 }
 
 function asRole(value: string | undefined): ParticipantRole {
@@ -63,15 +70,24 @@ export function loadRuntimeConfig(env: Record<string, string | undefined>): Runt
     ingress_mode_source:
       env.PILOT_RUNTIME_INGRESS_MODE_SOURCE ?? "supabase.table.runtime_control.active_ingress_mode",
     allowed_event_types: parseList(env.PILOT_ALLOWED_EVENT_TYPES, ["local_commit", "commit-event", "commit_event"]),
-    stub_allowlist_state: asAllowlistState(env.PILOT_STUB_ALLOWLIST_STATE),
+    default_global_role: asGlobalRole(env.PILOT_DEFAULT_GLOBAL_ROLE),
     stub_role: asRole(env.PILOT_STUB_ROLE),
     supabase_url: env.PILOT_SUPABASE_URL ?? env.SUPABASE_URL,
     supabase_service_role_key: env.PILOT_SUPABASE_SERVICE_ROLE_KEY ?? env.SUPABASE_SERVICE_ROLE_KEY,
     operator_email: env.PILOT_OPERATOR_EMAIL,
     organization_id: env.PILOT_ORGANIZATION_ID ?? "applied-ai-labs",
     program_label: env.PILOT_PROGRAM_LABEL ?? "AI Fluency Lab",
-    program_cycle_id: env.PILOT_ACTIVE_PROGRAM_CYCLE_ID ?? "cycle-innovation-day-001",
+    default_cycle_id: env.PILOT_ACTIVE_PROGRAM_CYCLE_ID ?? "cycle-innovation-day-001",
     root_problem_version_id: env.PILOT_ROOT_PROBLEM_VERSION_ID ?? "pilot-v1",
+    focus_snapshot:
+      env.PILOT_FOCUS_SNAPSHOT ??
+      "How do we build sustained AI fluency inside a student population when the technology and norms are constantly shifting?",
     default_model: env.PILOT_DEFAULT_MODEL ?? "gpt-4o-mini",
+    openai_api_key: env.PILOT_OPENAI_API_KEY ?? env.OPENAI_API_KEY,
+    notion_integration_token: env.PILOT_NOTION_INTEGRATION_TOKEN ?? env.NOTION_INTEGRATION_TOKEN,
+    notion_api_base_url: env.PILOT_NOTION_API_BASE_URL ?? "https://api.notion.com/v1",
+    notion_root_page_url: env.PILOT_NOTION_ROOT_PAGE_URL,
+    notion_db_research_inbox_id: env.PILOT_NOTION_DB_RESEARCH_INBOX_ID,
+    notion_db_team_intake_id: env.PILOT_NOTION_DB_TEAM_INTAKE_ID,
   };
 }

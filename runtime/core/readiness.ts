@@ -30,7 +30,7 @@ export function evaluateReadiness(input: ReadinessEvaluateInput): ReadinessEvalu
 
   return {
     organization_id: input.organization_id,
-    program_cycle_id: input.program_cycle_id,
+    cycle_id: input.cycle_id,
     root_problem_version_id: input.root_problem_version_id,
     ready_to_publish: criteriaReady && confirmationReady,
     score,
