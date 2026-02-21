@@ -2,11 +2,15 @@
   "rewrites": [
     {
       "source": "/",
-      "destination": "/api"
+      "destination": "/api/handler?raw_path=/"
     },
     {
       "source": "/health",
-      "destination": "/api/health"
+      "destination": "/api/handler?raw_path=/health"
+    },
+    {
+      "source": "/api/(.*)",
+      "destination": "/api/handler?raw_path=/api/$1"
     }
   ]
 }
