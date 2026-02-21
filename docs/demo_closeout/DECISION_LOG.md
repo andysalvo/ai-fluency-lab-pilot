@@ -8,6 +8,11 @@ Use Notion + Supabase + Vercel to run a cycle-scoped, safe, agentic collaboratio
 **"How do we build sustained AI fluency inside a student population when the technology and norms are constantly shifting?"**
 
 ## Final Sprint Decisions
+- Decision: frontstage was restructured to a strict lab-only layout with four sections only: `What We’re Working On`, `Add a Source`, `My Work`, `Lab Record`.
+- Decision: `Docs` and `Tasks` were removed from team-facing frontstage and kept as operator-only internal references.
+- Decision: brand voice is now `professional + simple + human` for 17-21 users, with `Lab Team` language.
+- Decision: final publish CTA language is `Add to Lab Record`.
+- Decision: canonical frontstage title is `Applied AI Labs - AI Fluency at Smeal`.
 - Decision: publish is allowed for `student` role on owned thread only, with server-side gates (`2-of-3` + explicit confirmation + credit check).
 - Decision: Notion intake sync is webhook-first (`team_intake`) with explicit admin backfill endpoint for recovery.
 - Decision: source commit-event path is `research_inbox` -> auto thread -> starter brief proposal -> visible surface update.
@@ -29,4 +34,5 @@ Use Notion + Supabase + Vercel to run a cycle-scoped, safe, agentic collaboratio
 4. Woah mechanics
 
 ## Deviations
-- None in this slice. Remaining deferred scope is documented in `REAL_VS_STUBBED.md`.
+- Logo asset was applied as `/branding/applied-ai-labs-logo.svg` for deterministic rendering in this environment.
+- Remaining deferred scope is documented in `REAL_VS_STUBBED.md`.

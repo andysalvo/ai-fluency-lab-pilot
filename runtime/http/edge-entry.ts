@@ -183,36 +183,52 @@ export async function handleRequest(request: Request, deps: EdgeHandlerDeps = {}
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>Applied AI Labs</title>
+    <title>Applied AI Labs - AI Fluency at Smeal</title>
     <style>
       :root { --ink: #1f2d56; --muted: #55617d; --bg: #f7f9fc; --card: #ffffff; --line: #dbe1ef; }
       * { box-sizing: border-box; }
       body { margin: 0; font-family: \"Helvetica Neue\", Helvetica, Arial, sans-serif; background: linear-gradient(180deg, var(--bg), #eef3fb); color: var(--ink); }
-      main { max-width: 860px; margin: 0 auto; padding: 40px 20px 56px; }
-      .brand { font-size: 30px; letter-spacing: 0.2px; font-weight: 700; margin: 0 0 8px; }
-      .sub { margin: 0 0 26px; color: var(--muted); font-size: 16px; }
-      .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 22px; box-shadow: 0 14px 40px rgba(31,45,86,0.06); }
+      main { max-width: 920px; margin: 0 auto; padding: 34px 20px 56px; }
+      .brand { margin: 0 0 8px; max-width: 320px; width: 100%; height: auto; display: block; }
+      .title { font-size: 26px; letter-spacing: 0.2px; font-weight: 700; margin: 0 0 4px; }
+      .sub { margin: 0 0 24px; color: var(--muted); font-size: 16px; }
+      .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 22px; box-shadow: 0 14px 40px rgba(31,45,86,0.06); margin-bottom: 14px; }
       .label { color: var(--muted); font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; }
       .focus { margin: 6px 0 0; font-size: 20px; line-height: 1.35; }
+      .section { margin: 0 0 6px; font-size: 20px; font-weight: 700; }
+      .copy { margin: 0; color: var(--muted); line-height: 1.5; }
       ol { margin: 16px 0 0; padding-left: 20px; color: var(--ink); line-height: 1.6; }
-      a.btn { display: inline-block; margin-top: 18px; background: var(--ink); color: #fff; text-decoration: none; border-radius: 10px; padding: 10px 14px; font-size: 14px; }
+      .btnrow { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 18px; }
+      a.btn { display: inline-block; background: var(--ink); color: #fff; text-decoration: none; border-radius: 10px; padding: 10px 14px; font-size: 14px; }
+      a.btn.secondary { background: #fff; color: var(--ink); border: 1px solid var(--line); }
       .note { margin-top: 12px; color: var(--muted); font-size: 13px; }
     </style>
   </head>
   <body>
     <main>
-      <h1 class="brand">Applied AI Labs</h1>
-      <p class="sub">AI Fluency Lab pilot. Calm, structured collaboration with explicit governance.</p>
+      <img class="brand" src="/branding/applied-ai-labs-logo.svg" alt="Applied AI Labs logo" />
+      <h1 class="title">Applied AI Labs - AI Fluency at Smeal</h1>
+      <p class="sub">Lab Team workspace for focused, high-signal AI thinking.</p>
       <section class="card">
         <div class="label">Current Focus</div>
         <p class="focus">${focus}</p>
-        <ol>
-          <li>Add one source URL and a short relevance note.</li>
-          <li>Review the Starter Brief proposal (processing -> ready).</li>
-          <li>Use readiness checks and publish explicitly to Lab Record.</li>
-        </ol>
-        <a class="btn" href="${notionHref}">Open Notion Workspace</a>
-        <p class="note">System proposes, humans approve. No auto-publish.</p>
+      </section>
+      <section class="card">
+        <h2 class="section">Add a Source</h2>
+        <p class="copy">Drop one URL and a short relevance note. The system proposes a starter brief with provenance.</p>
+      </section>
+      <section class="card">
+        <h2 class="section">My Work</h2>
+        <p class="copy">Review your thread, improve signal quality, and keep momentum in one place.</p>
+      </section>
+      <section class="card">
+        <h2 class="section">Lab Record</h2>
+        <p class="copy">When work meets criteria, use <strong>Add to Lab Record</strong> with explicit confirmation.</p>
+        <div class="btnrow">
+          <a class="btn" href="${notionHref}">Open Lab Workspace</a>
+          <a class="btn secondary" href="/health">Check Runtime Health</a>
+        </div>
+        <p class="note">System proposes. Lab Team decides. No auto-publish.</p>
       </section>
     </main>
   </body>

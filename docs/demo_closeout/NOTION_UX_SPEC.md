@@ -7,18 +7,38 @@ Use Notion + Supabase + Vercel to run a cycle-scoped, safe, agentic collaboratio
 
 **"How do we build sustained AI fluency inside a student population when the technology and norms are constantly shifting?"**
 
+## Brand and Voice
+- Brand: `Applied AI Labs`
+- Frontstage title: `Applied AI Labs - AI Fluency at Smeal`
+- Voice: professional, simple, human, low-jargon.
+- Team term: `Lab Team`
+- Publish CTA language: `Add to Lab Record`
+
+## Frontstage Restructure (Applied)
+Old frontstage:
+- Root page mixed workspace blocks (`Docs`, `Tasks`, raw DB stack).
+
+New frontstage:
+- Dedicated page: `Applied AI Labs - AI Fluency at Smeal`
+- Ordered sections only:
+  1. `What We’re Working On`
+  2. `Add a Source`
+  3. `My Work`
+  4. `Lab Record`
+- `Docs` + `Tasks` removed from team-facing flow.
+
 ## Team Surface (Visible)
-- `AI Fluency Lab — Smeal`
+- `Applied AI Labs - AI Fluency at Smeal`
   - `What We’re Working On`
   - `Research Inbox` (source intake)
-  - `Research Threads`
-  - `My Work` (thread + starter brief proposals)
+  - `My Work` (threads/turns + starter brief proposals)
   - `Lab Record`
 
 ## Operator Console (Private, Unlinked)
 - `Team Intake` (membership sync source of truth)
 - `Cycle Controls`
 - `Audit View`
+- `Archived Internal` (`Docs`, `Tasks`) links only
 
 ## Required DB/Property Notes
 - Every operational record must include `cycle_id`.
@@ -37,3 +57,7 @@ Use Notion + Supabase + Vercel to run a cycle-scoped, safe, agentic collaboratio
 - Team members: visible team pages only.
 - Operators/admins: operator console access.
 - Security enforcement is always runtime-side, never Notion-only.
+
+## Canonical URLs (Current)
+- Frontstage: `https://www.notion.so/Applied-AI-Labs-AI-Fluency-at-Smeal-30e4c63befac81a6bccdee6c55253ece`
+- Operator Console: `https://www.notion.so/Operator-Console-30e4c63befac8139bfb8c5184278b362`
