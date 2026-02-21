@@ -28,6 +28,7 @@ function parsePayload(input: unknown): ParseResult {
     "event_type",
     "occurred_at",
     "idempotency_key",
+    "cycle_id",
   ];
 
   for (const key of required) {
@@ -49,9 +50,10 @@ function parsePayload(input: unknown): ParseResult {
       event_type: candidate.event_type!.trim(),
       occurred_at: candidate.occurred_at!,
       idempotency_key: candidate.idempotency_key!.trim(),
+      cycle_id: candidate.cycle_id!.trim(),
+      actor_email: typeof candidate.actor_email === "string" ? candidate.actor_email.trim() : undefined,
       signature: typeof candidate.signature === "string" ? candidate.signature : undefined,
       organization_id: typeof candidate.organization_id === "string" ? candidate.organization_id.trim() : undefined,
-      program_cycle_id: typeof candidate.program_cycle_id === "string" ? candidate.program_cycle_id.trim() : undefined,
       root_problem_version_id:
         typeof candidate.root_problem_version_id === "string" ? candidate.root_problem_version_id.trim() : undefined,
     },
@@ -63,12 +65,15 @@ export async function handleIngest(input: unknown, deps: IngestHandlerDeps): Pro
   const parsed = parsePayload(input);
 
   if (!parsed.ok || !parsed.payload) {
+    const source = (input ?? {}) as Partial<NotionLikeWebhookPayload>;
+    const maybeCycle = typeof source.cycle_id === "string" ? source.cycle_id : undefined;
     return {
       ok: false,
       ingest_state: "failed",
       trigger_type: "unsupported",
-      result_code: "PAYLOAD_INVALID",
+      result_code: parsed.error?.includes("cycle_id") ? "CYCLE_NOT_SELECTED" : "PAYLOAD_INVALID",
       message: parsed.error ?? "invalid payload",
+      cycle_id: maybeCycle,
     };
   }
 
@@ -85,6 +90,7 @@ export async function handleIngest(input: unknown, deps: IngestHandlerDeps): Pro
       details: {
         duplicate_of_event_id: existing.event_id,
         duplicate_skipped: true,
+        replay_payload: existing.details?.replay_payload ?? null,
       },
     });
 
@@ -96,8 +102,12 @@ export async function handleIngest(input: unknown, deps: IngestHandlerDeps): Pro
       result_code: "DUPLICATE_SKIPPED",
       message: "Duplicate idempotency key detected. Execution skipped.",
       organization_id: existing.organization_id,
-      program_cycle_id: existing.program_cycle_id,
+      cycle_id: existing.cycle_id,
       root_problem_version_id: existing.root_problem_version_id,
+      replay_payload:
+        existing.details && typeof existing.details === "object"
+          ? ((existing.details.replay_payload ?? undefined) as Record<string, unknown> | undefined)
+          : undefined,
     };
   }
 
@@ -109,7 +119,7 @@ export async function handleIngest(input: unknown, deps: IngestHandlerDeps): Pro
       event_type: payload.event_type,
       idempotency_key: payload.idempotency_key,
       organization_id: programContext.organization_id,
-      program_cycle_id: programContext.program_cycle_id,
+      cycle_id: programContext.cycle_id,
       root_problem_version_id: programContext.root_problem_version_id,
       ingest_state: "received",
     });
@@ -122,7 +132,7 @@ export async function handleIngest(input: unknown, deps: IngestHandlerDeps): Pro
         result_code: "DUPLICATE_SKIPPED",
         message: "Duplicate idempotency key detected during insert.",
         organization_id: programContext.organization_id,
-        program_cycle_id: programContext.program_cycle_id,
+        cycle_id: programContext.cycle_id,
         root_problem_version_id: programContext.root_problem_version_id,
       };
     }
@@ -134,7 +144,7 @@ export async function handleIngest(input: unknown, deps: IngestHandlerDeps): Pro
       result_code: "INGEST_INSERT_FAILED",
       message: error instanceof Error ? error.message : "unknown insert failure",
       organization_id: programContext.organization_id,
-      program_cycle_id: programContext.program_cycle_id,
+      cycle_id: programContext.cycle_id,
       root_problem_version_id: programContext.root_problem_version_id,
     };
   }
@@ -164,10 +174,16 @@ export async function handleIngest(input: unknown, deps: IngestHandlerDeps): Pro
       result_code: "TRIGGER_NOT_ALLOWED",
       message: "Only commit-event trigger types are allowed in Slice 1.",
       organization_id: record.organization_id,
-      program_cycle_id: record.program_cycle_id,
+      cycle_id: record.cycle_id,
       root_problem_version_id: record.root_problem_version_id,
     };
   }
+
+  const replayPayload: Record<string, unknown> = {
+    event_id: record.event_id,
+    trigger_type: "local_commit",
+    accepted_at: now(),
+  };
 
   await deps.persistence.updateIngestState(record.event_id, {
     ingest_state: "processed",
@@ -175,6 +191,7 @@ export async function handleIngest(input: unknown, deps: IngestHandlerDeps): Pro
     details: {
       trigger_type: "local_commit",
       execution_mode: "slice1_stub",
+      replay_payload: replayPayload,
     },
   });
 
@@ -186,7 +203,8 @@ export async function handleIngest(input: unknown, deps: IngestHandlerDeps): Pro
     result_code: "INGEST_ACCEPTED",
     message: "Commit-event accepted for local_commit processing.",
     organization_id: record.organization_id,
-    program_cycle_id: record.program_cycle_id,
+    cycle_id: record.cycle_id,
     root_problem_version_id: record.root_problem_version_id,
+    replay_payload: replayPayload,
   };
 }

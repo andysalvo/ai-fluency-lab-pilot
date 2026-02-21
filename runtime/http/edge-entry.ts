@@ -3,6 +3,7 @@ import { createPersistenceAdapter } from "../adapters/factory.js";
 import type { PersistenceAdapter } from "../adapters/persistence.js";
 import {
   activateProgramCycle,
+  bootstrapProgramCycle,
   createProgramCycle,
   exportProgramCycle,
   freezeProgramCycle,
@@ -10,10 +11,11 @@ import {
   snapshotProgramCycle,
 } from "../core/cycle-admin.js";
 import { handleIngest } from "../core/ingest-handler.js";
-import { executePublishStub } from "../core/protected-actions.js";
+import { executePublishAction, guardAndAuditAction } from "../core/protected-actions.js";
 import { resolveProgramContext } from "../core/program-context.js";
 import { evaluateReadiness } from "../core/readiness.js";
-import type { AllowlistState, ParticipantRole, PublishActionInput } from "../core/types.js";
+import { processCommitEvent } from "../core/webhook-commit.js";
+import type { NotionLikeWebhookPayload } from "../core/types.js";
 
 interface DefaultRuntimeContext {
   config: RuntimeConfig;
@@ -39,20 +41,13 @@ function json(status: number, payload: unknown): Response {
   });
 }
 
-function asAllowlistState(value: string | null | undefined): AllowlistState | undefined {
-  if (value === "allowlisted" || value === "active" || value === "suspended" || value === "revoked") {
-    return value;
-  }
-
-  return undefined;
-}
-
-function asRole(value: string | null | undefined): ParticipantRole | undefined {
-  if (value === "student" || value === "moderator" || value === "facilitator" || value === "operator") {
-    return value;
-  }
-
-  return undefined;
+function html(status: number, markup: string): Response {
+  return new Response(markup, {
+    status,
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+    },
+  });
 }
 
 async function parseJsonBody(request: Request): Promise<unknown> {
@@ -85,13 +80,16 @@ function readBoolean(source: Record<string, unknown>, key: string): boolean {
   return value === true;
 }
 
-function actorFromRequest(payload: Record<string, unknown>, request: Request) {
-  return {
-    actor_email: readString(payload, "actor_email") ?? request.headers.get("x-actor-email") ?? undefined,
-    allowlist_state: asAllowlistState(readString(payload, "allowlist_state") ?? request.headers.get("x-allowlist-state")),
-    role: asRole(readString(payload, "role") ?? request.headers.get("x-role")),
-    why: readString(payload, "why"),
-  };
+function canonicalizeEmail(email: string): string {
+  return email.trim().toLowerCase();
+}
+
+function actorEmailFromRequest(payload: Record<string, unknown>, request: Request): string | undefined {
+  return readString(payload, "actor_email") ?? readString(payload, "email") ?? request.headers.get("x-actor-email") ?? undefined;
+}
+
+function cycleIdFromRequest(payload: Record<string, unknown>, request: Request): string | undefined {
+  return readString(payload, "cycle_id") ?? request.headers.get("x-cycle-id") ?? undefined;
 }
 
 function getDefaultContext(): DefaultRuntimeContext {
@@ -113,7 +111,7 @@ async function resolveActiveIngressMode(config: RuntimeConfig, persistence: Pers
         return mode;
       }
     } catch {
-      // Slice 2 behavior: fall back to configured default when source lookup fails.
+      // Fall back to configured mode if source lookup fails.
     }
   }
 
@@ -126,74 +124,398 @@ export interface EdgeHandlerDeps {
   now?: () => string;
 }
 
+async function resolveParticipantContext(
+  persistence: PersistenceAdapter,
+  config: RuntimeConfig,
+  organizationId: string,
+  actorEmail: string | undefined,
+  cycleId: string | undefined,
+) {
+  if (!actorEmail) {
+    return { ok: false, reason_code: "IDENTITY_UNRESOLVED" as const };
+  }
+
+  const participant = await persistence.getParticipantByEmailCanonical(canonicalizeEmail(actorEmail));
+  if (!participant) {
+    return { ok: false, reason_code: "NO_MEMBERSHIP_FOR_CYCLE" as const };
+  }
+
+  if (participant.global_state !== "active") {
+    return { ok: false, reason_code: "GLOBAL_STATE_BLOCKED" as const, participant };
+  }
+
+  if (!cycleId) {
+    return { ok: false, reason_code: "CYCLE_NOT_SELECTED" as const, participant };
+  }
+
+  const membership = await persistence.getCycleMembership(participant.participant_id, organizationId, cycleId);
+  if (!membership || membership.membership_state !== "active") {
+    return { ok: false, reason_code: "NO_MEMBERSHIP_FOR_CYCLE" as const, participant };
+  }
+
+  const cycle = await persistence.getProgramCycle(organizationId, cycleId);
+  if (!cycle) {
+    return { ok: false, reason_code: "NO_MEMBERSHIP_FOR_CYCLE" as const, participant, membership };
+  }
+
+  if (cycle.state === "archived" && participant.global_role !== "operator" && participant.global_role !== "admin") {
+    return { ok: false, reason_code: "CYCLE_ARCHIVED" as const, participant, membership, cycle };
+  }
+
+  return { ok: true as const, participant, membership, cycle };
+}
+
 export async function handleRequest(request: Request, deps: EdgeHandlerDeps = {}): Promise<Response> {
   const fallback = getDefaultContext();
   const persistence = deps.persistence ?? fallback.persistence;
   const config = deps.config ?? fallback.config;
-  const now = deps.now;
+  const now = deps.now ?? (() => new Date().toISOString());
 
   const url = new URL(request.url);
 
+  if (request.method === "GET" && url.pathname === "/") {
+    const notionHref = config.notion_root_page_url ?? "#";
+    const focus = config.focus_snapshot;
+    return html(
+      200,
+      `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Applied AI Labs</title>
+    <style>
+      :root { --ink: #1f2d56; --muted: #55617d; --bg: #f7f9fc; --card: #ffffff; --line: #dbe1ef; }
+      * { box-sizing: border-box; }
+      body { margin: 0; font-family: \"Helvetica Neue\", Helvetica, Arial, sans-serif; background: linear-gradient(180deg, var(--bg), #eef3fb); color: var(--ink); }
+      main { max-width: 860px; margin: 0 auto; padding: 40px 20px 56px; }
+      .brand { font-size: 30px; letter-spacing: 0.2px; font-weight: 700; margin: 0 0 8px; }
+      .sub { margin: 0 0 26px; color: var(--muted); font-size: 16px; }
+      .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 22px; box-shadow: 0 14px 40px rgba(31,45,86,0.06); }
+      .label { color: var(--muted); font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; }
+      .focus { margin: 6px 0 0; font-size: 20px; line-height: 1.35; }
+      ol { margin: 16px 0 0; padding-left: 20px; color: var(--ink); line-height: 1.6; }
+      a.btn { display: inline-block; margin-top: 18px; background: var(--ink); color: #fff; text-decoration: none; border-radius: 10px; padding: 10px 14px; font-size: 14px; }
+      .note { margin-top: 12px; color: var(--muted); font-size: 13px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1 class="brand">Applied AI Labs</h1>
+      <p class="sub">AI Fluency Lab pilot. Calm, structured collaboration with explicit governance.</p>
+      <section class="card">
+        <div class="label">Current Focus</div>
+        <p class="focus">${focus}</p>
+        <ol>
+          <li>Add one source URL and a short relevance note.</li>
+          <li>Review the Starter Brief proposal (processing -> ready).</li>
+          <li>Use readiness checks and publish explicitly to Lab Record.</li>
+        </ol>
+        <a class="btn" href="${notionHref}">Open Notion Workspace</a>
+        <p class="note">System proposes, humans approve. No auto-publish.</p>
+      </section>
+    </main>
+  </body>
+</html>`,
+    );
+  }
+
   if (request.method === "GET" && url.pathname === "/health") {
     const activeIngressMode = await resolveActiveIngressMode(config, persistence);
+    const runtimeControl = await persistence.getRuntimeControl();
     return json(200, {
       ok: true,
-      service: "slice2-runtime",
+      service: "cycle-isolation-runtime",
       persistence_backend: config.persistence_backend,
       ingress_mode_source: config.ingress_mode_source,
       active_ingress_mode: activeIngressMode,
+      global_protected_actions_halt: runtimeControl.global_protected_actions_halt,
+      halt_reason: runtimeControl.halt_reason ?? null,
     });
   }
 
   if (request.method === "POST" && url.pathname === "/api/notion/webhook") {
-    const payload = await parseJsonBody(request);
+    const payloadRaw = await parseJsonBody(request);
+    const payload = asObject(payloadRaw);
+    if (!payload.cycle_id) {
+      payload.cycle_id = request.headers.get("x-cycle-id") ?? undefined;
+    }
+
     const result = await handleIngest(payload, { persistence, config, now });
-    return json(result.ok ? 200 : 400, result);
+    if (!result.ok || result.ingest_state !== "processed" || result.trigger_type !== "local_commit") {
+      return json(result.ok ? 200 : 400, result);
+    }
+
+    const commitResult = await processCommitEvent(payload as unknown as NotionLikeWebhookPayload, { persistence, config, now });
+    if (!commitResult.ok) {
+      if (result.event_id) {
+        await persistence.updateIngestState(result.event_id, {
+          ingest_state: "failed",
+          error_code: commitResult.result_code,
+          processed_at: now(),
+          details: {
+            post_ingest_error: commitResult,
+          },
+        });
+      }
+
+      return json(400, {
+        ...result,
+        ok: false,
+        ingest_state: "failed",
+        result_code: commitResult.result_code,
+        message: commitResult.message,
+        post_ingest: commitResult,
+      });
+    }
+
+    return json(200, {
+      ...result,
+      post_ingest: commitResult,
+    });
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/session/active-cycle/select") {
+    const payload = asObject(await parseJsonBody(request));
+    const actorEmail = actorEmailFromRequest(payload, request);
+    const cycleId = cycleIdFromRequest(payload, request);
+    const organizationId = readString(payload, "organization_id") ?? config.organization_id;
+    if (!actorEmail) {
+      return json(401, { ok: false, reason_code: "IDENTITY_UNRESOLVED" });
+    }
+
+    if (!cycleId) {
+      return json(400, { ok: false, reason_code: "CYCLE_NOT_SELECTED" });
+    }
+
+    const participant = await persistence.getParticipantByEmailCanonical(canonicalizeEmail(actorEmail));
+    if (!participant) {
+      return json(403, { ok: false, reason_code: "NO_MEMBERSHIP_FOR_CYCLE" });
+    }
+
+    const membership = await persistence.activateMembership(participant.participant_id, organizationId, cycleId, now());
+    if (!membership) {
+      return json(403, { ok: false, reason_code: "NO_MEMBERSHIP_FOR_CYCLE", cycle_id: cycleId });
+    }
+
+    await persistence.setSessionActiveCycle(participant.participant_id, cycleId, now());
+    return json(200, {
+      ok: true,
+      cycle_id: cycleId,
+      membership_state: membership.membership_state,
+      role: membership.role,
+      message: "Active cycle selected.",
+    });
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/auth/callback/google") {
+    const payload = asObject(await parseJsonBody(request));
+    const actorEmail = actorEmailFromRequest(payload, request);
+    const cycleId = cycleIdFromRequest(payload, request);
+    const organizationId = readString(payload, "organization_id") ?? config.organization_id;
+
+    if (!actorEmail) {
+      return json(401, {
+        ok: false,
+        login_state: "login_failed",
+        access_granted: false,
+        reason_code: "IDENTITY_UNRESOLVED",
+      });
+    }
+
+    const participant = await persistence.getParticipantByEmailCanonical(canonicalizeEmail(actorEmail));
+    if (!participant) {
+      return json(403, {
+        ok: false,
+        login_state: "login_blocked_not_allowlisted",
+        access_granted: false,
+        reason_code: "NO_MEMBERSHIP_FOR_CYCLE",
+        email: actorEmail,
+      });
+    }
+
+    if (participant.global_state !== "active") {
+      return json(403, {
+        ok: false,
+        login_state: "login_blocked_revoked",
+        access_granted: false,
+        reason_code: "GLOBAL_STATE_BLOCKED",
+        email: actorEmail,
+      });
+    }
+
+    if (!cycleId) {
+      return json(200, {
+        ok: true,
+        login_state: "login_success",
+        access_granted: false,
+        reason_code: "CYCLE_NOT_SELECTED",
+        requires_cycle_selection: true,
+        email: actorEmail,
+      });
+    }
+
+    const membership = await persistence.getCycleMembership(participant.participant_id, organizationId, cycleId);
+    if (!membership || membership.membership_state === "inactive") {
+      return json(403, {
+        ok: false,
+        login_state: "login_blocked_not_allowlisted",
+        access_granted: false,
+        reason_code: "NO_MEMBERSHIP_FOR_CYCLE",
+        cycle_id: cycleId,
+        email: actorEmail,
+      });
+    }
+
+    if (membership.membership_state === "revoked") {
+      return json(403, {
+        ok: false,
+        login_state: "login_blocked_revoked",
+        access_granted: false,
+        reason_code: "MEMBERSHIP_REVOKED",
+        cycle_id: cycleId,
+        email: actorEmail,
+      });
+    }
+
+    const activatedMembership = await persistence.activateMembership(participant.participant_id, organizationId, cycleId, now());
+    if (!activatedMembership) {
+      return json(403, {
+        ok: false,
+        login_state: "login_blocked_not_allowlisted",
+        access_granted: false,
+        reason_code: "NO_MEMBERSHIP_FOR_CYCLE",
+        cycle_id: cycleId,
+        email: actorEmail,
+      });
+    }
+
+    await persistence.updateParticipantLastLogin(participant.participant_id, now());
+    await persistence.setSessionActiveCycle(participant.participant_id, cycleId, now());
+
+    return json(200, {
+      ok: true,
+      login_state: "login_success",
+      access_granted: true,
+      cycle_id: cycleId,
+      membership_state: activatedMembership.membership_state,
+      role: activatedMembership.role,
+      email: actorEmail,
+    });
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/visible-surface") {
+    const payload = asObject(await parseJsonBody(request));
+    const actorEmail = actorEmailFromRequest(payload, request);
+    const cycleId = cycleIdFromRequest(payload, request);
+    const organizationId = readString(payload, "organization_id") ?? config.organization_id;
+
+    const participantContext = await resolveParticipantContext(persistence, config, organizationId, actorEmail, cycleId);
+    if (!participantContext.ok) {
+      return json(403, { ok: false, reason_code: participantContext.reason_code });
+    }
+
+    const participant = participantContext.participant;
+    if (!participant) {
+      return json(500, { ok: false, reason_code: "IDENTITY_UNRESOLVED" });
+    }
+
+    const threads = await persistence.listVisibleThreads(participant.participant_id, cycleId!);
+    const sources = await persistence.listVisibleSources(participant.participant_id, cycleId!);
+    const starterBriefs = await persistence.listVisibleStarterBriefs(participant.participant_id, cycleId!);
+    const labRecord = await persistence.listVisibleLabRecord(cycleId!);
+
+    return json(200, {
+      ok: true,
+      cycle_id: cycleId,
+      participant_id: participant.participant_id,
+      threads,
+      sources,
+      starter_briefs: starterBriefs,
+      lab_record: labRecord,
+    });
   }
 
   if (request.method === "POST" && url.pathname === "/api/actions/publish") {
     const payloadRaw = await parseJsonBody(request);
     const payload = asObject(payloadRaw);
-    const actor = actorFromRequest(payload, request);
+    const cycleId = cycleIdFromRequest(payload, request);
+    const actorEmail = actorEmailFromRequest(payload, request);
     const context = resolveProgramContext(
       {
         organization_id: readString(payload, "organization_id"),
-        program_cycle_id: readString(payload, "program_cycle_id"),
+        cycle_id: cycleId,
         root_problem_version_id: readString(payload, "root_problem_version_id"),
       },
       config,
     );
 
-    const input: PublishActionInput = {
-      thread_id: readString(payload, "thread_id") ?? "unknown-thread",
-      actor_email: actor.actor_email,
-      allowlist_state: actor.allowlist_state,
-      role: actor.role,
-      why: readString(payload, "why"),
-      linked_event_id: readString(payload, "linked_event_id"),
-      linked_idempotency_key: readString(payload, "linked_idempotency_key"),
-      ...context,
-    };
+    const result = await executePublishAction(
+      {
+        thread_id: readString(payload, "thread_id") ?? "unknown-thread",
+        actor_email: actorEmail,
+        cycle_id: cycleId,
+        claim: readBoolean(payload, "claim"),
+        value: readBoolean(payload, "value"),
+        difference: readBoolean(payload, "difference"),
+        explicit_confirmation: readBoolean(payload, "explicit_confirmation"),
+        content: asObject(payload.content),
+        why: readString(payload, "why"),
+        client_request_id: readString(payload, "client_request_id"),
+        linked_event_id: readString(payload, "linked_event_id"),
+        linked_idempotency_key: readString(payload, "linked_idempotency_key"),
+        organization_id: context.organization_id,
+        root_problem_version_id: context.root_problem_version_id,
+      },
+      { persistence, config, now },
+    );
 
-    const result = await executePublishStub(input, { persistence, config, now });
     return json(result.allowed ? 200 : 403, result);
   }
 
   if (request.method === "POST" && url.pathname === "/api/actions/readiness/evaluate") {
     const payload = asObject(await parseJsonBody(request));
+    const cycleId = cycleIdFromRequest(payload, request);
+    const actorEmail = actorEmailFromRequest(payload, request);
     const context = resolveProgramContext(
       {
         organization_id: readString(payload, "organization_id"),
-        program_cycle_id: readString(payload, "program_cycle_id"),
+        cycle_id: cycleId,
         root_problem_version_id: readString(payload, "root_problem_version_id"),
       },
       config,
     );
 
+    const guard = await guardAndAuditAction(
+      "compare",
+      {
+        actor_email: actorEmail,
+        cycle_id: cycleId,
+        thread_id: readString(payload, "thread_id"),
+        client_request_id: readString(payload, "client_request_id"),
+        why: readString(payload, "why"),
+        organization_id: context.organization_id,
+        root_problem_version_id: context.root_problem_version_id,
+      },
+      { persistence, config, now },
+    );
+
+    if (!guard.decision.allowed) {
+      return json(403, {
+        ok: false,
+        reason_code: guard.decision.reason_code,
+        audit_id: guard.audit_id,
+        cycle_id: cycleId,
+      });
+    }
+
     const response = evaluateReadiness({
-      ...context,
+      organization_id: context.organization_id,
+      cycle_id: cycleId ?? "",
+      root_problem_version_id: context.root_problem_version_id,
       thread_id: readString(payload, "thread_id") ?? "unknown-thread",
-      actor_email: actorFromRequest(payload, request).actor_email,
+      actor_email: actorEmail,
+      client_request_id: readString(payload, "client_request_id"),
       claim: readBoolean(payload, "claim"),
       value: readBoolean(payload, "value"),
       difference: readBoolean(payload, "difference"),
@@ -203,86 +525,99 @@ export async function handleRequest(request: Request, deps: EdgeHandlerDeps = {}
     return json(response.ready_to_publish ? 200 : 400, response);
   }
 
-  if (request.method === "POST" && url.pathname === "/api/auth/callback/google") {
+  if (request.method === "POST" && url.pathname === "/api/admin/intake/backfill") {
     const payload = asObject(await parseJsonBody(request));
-    const context = resolveProgramContext(
-      {
-        organization_id: readString(payload, "organization_id"),
-        program_cycle_id: readString(payload, "program_cycle_id"),
-        root_problem_version_id: readString(payload, "root_problem_version_id"),
-      },
-      config,
-    );
+    if (!payload.cycle_id) {
+      payload.cycle_id = request.headers.get("x-cycle-id") ?? undefined;
+    }
+    if (!payload.idempotency_key) {
+      payload.idempotency_key = `backfill:${Date.now()}`;
+    }
+    if (!payload.event_type) {
+      payload.event_type = "local_commit";
+    }
+    if (!payload.occurred_at) {
+      payload.occurred_at = now();
+    }
+    if (!payload.source_record_id) {
+      payload.source_record_id = `backfill-${Date.now()}`;
+    }
 
-    const actorEmail = readString(payload, "email") ?? request.headers.get("x-actor-email") ?? undefined;
-    const allowlistState = asAllowlistState(readString(payload, "allowlist_state") ?? request.headers.get("x-allowlist-state"));
-    const role = asRole(readString(payload, "role") ?? request.headers.get("x-role"));
+    const sourceTable = readString(payload, "source_table") ?? "team_intake";
+    payload.source_table = sourceTable;
 
-    if (!actorEmail) {
-      return json(401, {
+    const ingestResult = await handleIngest(payload, { persistence, config, now });
+    if (!ingestResult.ok || ingestResult.ingest_state !== "processed" || ingestResult.trigger_type !== "local_commit") {
+      return json(ingestResult.ok ? 200 : 400, ingestResult);
+    }
+
+    const commitResult = await processCommitEvent(payload as unknown as NotionLikeWebhookPayload, { persistence, config, now });
+    if (!commitResult.ok) {
+      if (ingestResult.event_id) {
+        await persistence.updateIngestState(ingestResult.event_id, {
+          ingest_state: "failed",
+          error_code: commitResult.result_code,
+          processed_at: now(),
+          details: {
+            backfill_error: commitResult,
+          },
+        });
+      }
+
+      return json(400, {
         ok: false,
-        login_state: "login_failed",
-        access_granted: false,
-        reason_code: "IDENTITY_UNRESOLVED",
-        ...context,
+        reason_code: commitResult.result_code,
+        message: commitResult.message,
+        post_ingest: commitResult,
       });
     }
 
-    if (allowlistState === "suspended") {
-      return json(403, {
-        ok: false,
-        login_state: "login_blocked_suspended",
-        access_granted: false,
-        reason_code: "ALLOWLIST_SUSPENDED",
-        email: actorEmail,
-        ...context,
-      });
-    }
-
-    if (allowlistState === "revoked") {
-      return json(403, {
-        ok: false,
-        login_state: "login_blocked_revoked",
-        access_granted: false,
-        reason_code: "ALLOWLIST_REVOKED",
-        email: actorEmail,
-        ...context,
-      });
-    }
-
-    if (allowlistState === "allowlisted" || allowlistState === "active") {
-      return json(200, {
-        ok: true,
-        login_state: "login_success",
-        access_granted: true,
-        allowlist_state: "active",
-        role: role ?? config.stub_role,
-        email: actorEmail,
-        message: "Google login succeeded. Protected actions still enforce allowlist + role server-side.",
-        ...context,
-      });
-    }
-
-    return json(403, {
-      ok: false,
-      login_state: "login_blocked_not_allowlisted",
-      access_granted: false,
-      reason_code: "ALLOWLIST_REQUIRED",
-      email: actorEmail,
-      ...context,
+    return json(200, {
+      ok: true,
+      result_code: "BACKFILL_APPLIED",
+      ingest: ingestResult,
+      post_ingest: commitResult,
     });
   }
 
   if (request.method === "POST" && url.pathname === "/api/admin/cycles/create") {
     const payload = asObject(await parseJsonBody(request));
-    const actor = actorFromRequest(payload, request);
     const result = await createProgramCycle(
       {
-        ...actor,
+        actor_email: actorEmailFromRequest(payload, request),
+        cycle_id: cycleIdFromRequest(payload, request),
         reason: readString(payload, "reason"),
+        focus_snapshot: readString(payload, "focus_snapshot"),
         organization_id: readString(payload, "organization_id"),
-        program_cycle_id: readString(payload, "program_cycle_id"),
         root_problem_version_id: readString(payload, "root_problem_version_id"),
+      },
+      { persistence, config, now },
+    );
+
+    return json(result.ok ? 200 : 403, result);
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/admin/cycles/bootstrap") {
+    const payload = asObject(await parseJsonBody(request));
+    const membershipsRaw = payload.memberships;
+    const memberships =
+      Array.isArray(membershipsRaw) && membershipsRaw.every((item) => item && typeof item === "object")
+        ? (membershipsRaw as Array<Record<string, unknown>>).map((item) => ({
+            email: readString(item, "email") ?? "",
+            role: (readString(item, "role") as "student" | "moderator" | "facilitator" | "operator" | undefined) ?? "student",
+            credits: Number(item.credits ?? 1),
+          }))
+        : undefined;
+
+    const result = await bootstrapProgramCycle(
+      {
+        actor_email: actorEmailFromRequest(payload, request),
+        cycle_id: cycleIdFromRequest(payload, request),
+        reason: readString(payload, "reason"),
+        focus_snapshot: readString(payload, "focus_snapshot"),
+        organization_id: readString(payload, "organization_id"),
+        root_problem_version_id: readString(payload, "root_problem_version_id"),
+        memberships,
       },
       { persistence, config, now },
     );
@@ -294,12 +629,11 @@ export async function handleRequest(request: Request, deps: EdgeHandlerDeps = {}
   if (request.method === "POST" && adminCycleMatch) {
     const [, cycleId, action] = adminCycleMatch;
     const payload = asObject(await parseJsonBody(request));
-    const actor = actorFromRequest(payload, request);
     const input = {
-      ...actor,
+      actor_email: actorEmailFromRequest(payload, request),
       reason: readString(payload, "reason"),
       organization_id: readString(payload, "organization_id"),
-      program_cycle_id: decodeURIComponent(cycleId),
+      cycle_id: decodeURIComponent(cycleId),
       root_problem_version_id: readString(payload, "root_problem_version_id"),
     };
 
@@ -320,7 +654,7 @@ export async function handleRequest(request: Request, deps: EdgeHandlerDeps = {}
 
     if (action === "export") {
       const result = await exportProgramCycle(input, { persistence, config, now });
-      return json(result.ok ? 200 : 400, result);
+      return json(result.ok ? 200 : 403, result);
     }
 
     const result = await resetNextProgramCycle(input, { persistence, config, now });
@@ -329,7 +663,6 @@ export async function handleRequest(request: Request, deps: EdgeHandlerDeps = {}
 
   return json(404, {
     ok: false,
-    error: "NOT_FOUND",
-    message: `No route for ${request.method} ${url.pathname}`,
+    message: "route not found",
   });
 }
