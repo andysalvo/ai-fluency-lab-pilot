@@ -2,6 +2,10 @@ import type { IngestRecord, ProtectedActionAuditRecord } from "../core/types.js"
 import type { IngestStateUpdate, PersistenceAdapter } from "./persistence.js";
 
 export class SupabasePersistenceAdapterStub implements PersistenceAdapter {
+  async getActiveIngressMode(): Promise<string | null> {
+    throw new Error("TODO: implement runtime_control lookup in Supabase adapter.");
+  }
+
   async getIngestByIdempotencyKey(_idempotencyKey: string): Promise<IngestRecord | null> {
     throw new Error("TODO: implement Supabase adapter once schema/migrations exist. How to determine: apply pilot schema and map this adapter to event_ingest_log.");
   }

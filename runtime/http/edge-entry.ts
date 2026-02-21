@@ -1,11 +1,16 @@
 import { loadRuntimeConfig, type RuntimeConfig } from "../adapters/env.js";
-import { InMemoryPersistenceAdapter } from "../adapters/inmemory.js";
+import { createPersistenceAdapter } from "../adapters/factory.js";
 import type { PersistenceAdapter } from "../adapters/persistence.js";
 import { handleIngest } from "../core/ingest-handler.js";
 import { executePublishStub } from "../core/protected-actions.js";
 import type { PublishActionInput } from "../core/types.js";
 
-const defaultPersistence = new InMemoryPersistenceAdapter();
+interface DefaultRuntimeContext {
+  config: RuntimeConfig;
+  persistence: PersistenceAdapter;
+}
+
+let defaultContext: DefaultRuntimeContext | null = null;
 
 function getDefaultEnv(): Record<string, string | undefined> {
   if (typeof process !== "undefined" && process.env) {
@@ -48,6 +53,32 @@ async function parseJsonBody(request: Request): Promise<unknown> {
   }
 }
 
+function getDefaultContext(): DefaultRuntimeContext {
+  if (defaultContext) {
+    return defaultContext;
+  }
+
+  const config = loadRuntimeConfig(getDefaultEnv());
+  const persistence = createPersistenceAdapter(config);
+  defaultContext = { config, persistence };
+  return defaultContext;
+}
+
+async function resolveActiveIngressMode(config: RuntimeConfig, persistence: PersistenceAdapter): Promise<string> {
+  if (config.ingress_mode_source === "supabase.table.runtime_control.active_ingress_mode") {
+    try {
+      const mode = await persistence.getActiveIngressMode();
+      if (mode) {
+        return mode;
+      }
+    } catch {
+      // Slice 2 behavior: fall back to configured default when source lookup fails.
+    }
+  }
+
+  return config.active_ingress_mode;
+}
+
 export interface EdgeHandlerDeps {
   persistence?: PersistenceAdapter;
   config?: RuntimeConfig;
@@ -55,17 +86,21 @@ export interface EdgeHandlerDeps {
 }
 
 export async function handleRequest(request: Request, deps: EdgeHandlerDeps = {}): Promise<Response> {
-  const persistence = deps.persistence ?? defaultPersistence;
-  const config = deps.config ?? loadRuntimeConfig(getDefaultEnv());
+  const fallback = getDefaultContext();
+  const persistence = deps.persistence ?? fallback.persistence;
+  const config = deps.config ?? fallback.config;
   const now = deps.now;
 
   const url = new URL(request.url);
 
   if (request.method === "GET" && url.pathname === "/health") {
+    const activeIngressMode = await resolveActiveIngressMode(config, persistence);
     return json(200, {
       ok: true,
-      service: "slice1-runtime",
-      active_ingress_mode: config.active_ingress_mode,
+      service: "slice2-runtime",
+      persistence_backend: config.persistence_backend,
+      ingress_mode_source: config.ingress_mode_source,
+      active_ingress_mode: activeIngressMode,
     });
   }
 

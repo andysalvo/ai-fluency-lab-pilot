@@ -18,6 +18,10 @@ export class InMemoryPersistenceAdapter implements PersistenceAdapter {
   private readonly eventIdByIdempotencyKey = new Map<string, string>();
   private readonly auditById = new Map<string, ProtectedActionAuditRecord>();
 
+  async getActiveIngressMode(): Promise<string | null> {
+    return null;
+  }
+
   async getIngestByIdempotencyKey(idempotencyKey: string): Promise<IngestRecord | null> {
     const eventId = this.eventIdByIdempotencyKey.get(idempotencyKey);
     if (!eventId) {
