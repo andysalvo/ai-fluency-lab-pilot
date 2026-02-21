@@ -1,18 +1,6 @@
 import type { IncomingMessage } from "node:http";
 import { handleRequest } from "../runtime/http/edge-entry.js";
 
-function remapPathname(pathname: string): string {
-  if (pathname === "/api") {
-    return "/";
-  }
-
-  if (pathname === "/api/health") {
-    return "/health";
-  }
-
-  return pathname;
-}
-
 function readBody(req: IncomingMessage): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
@@ -26,13 +14,25 @@ function readBody(req: IncomingMessage): Promise<Buffer> {
   });
 }
 
+function resolveRawPath(incomingUrl: URL): string {
+  const rawPath = incomingUrl.searchParams.get("raw_path");
+  if (!rawPath || rawPath.trim().length === 0) {
+    return incomingUrl.pathname;
+  }
+
+  return rawPath.startsWith("/") ? rawPath : `/${rawPath}`;
+}
+
 export default async function handler(req: IncomingMessage, res: any): Promise<void> {
   try {
     const method = req.method ?? "GET";
     const host = (req.headers["x-forwarded-host"] as string | undefined) ?? req.headers.host ?? "localhost";
     const protocol = (req.headers["x-forwarded-proto"] as string | undefined) ?? "https";
     const incomingUrl = new URL(req.url ?? "/", `${protocol}://${host}`);
-    incomingUrl.pathname = remapPathname(incomingUrl.pathname);
+    const rawPath = resolveRawPath(incomingUrl);
+
+    incomingUrl.pathname = rawPath;
+    incomingUrl.searchParams.delete("raw_path");
 
     const body = await readBody(req);
 
