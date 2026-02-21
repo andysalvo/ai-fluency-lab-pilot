@@ -34,20 +34,20 @@ Rules:
 | `pilot.vercel.team_id` | team_o05ic4DW1kwnyefXmNd6RODN |
 | `pilot.sso.authorized_origins` | https://ai-fluency-lab-pilot.vercel.app |
 | `pilot.sso.redirect_uris` | https://ai-fluency-lab-pilot.vercel.app/api/auth/callback/google |
-| `pilot.openai.allowed_models` | `TBD` |
-| `pilot.notion.workspace_url` | `TBD` |
-| `pilot.notion.root_page_url` | `TBD` |
-| `pilot.notion.db_threads_id` | `TBD` |
-| `pilot.notion.db_turns_id` | `TBD` |
-| `pilot.notion.db_outputs_id` | `TBD` |
-| `pilot.notion.db_research_inbox_id` | `TBD` |
-| `pilot.notion.db_research_library_id` | `TBD` |
-| `pilot.notion.webhook_endpoint_url` | `TBD` |
-| `pilot.root_problem_version_id` | `TBD` |
+| `pilot.openai.allowed_models` | `gpt-4o-mini` |
+| `pilot.notion.workspace_url` | `https://www.notion.so` |
+| `pilot.notion.root_page_url` | `https://www.notion.so/AI-Fluency-Lab-OS-30e4c63befac80f59243cc480dfdbb43` |
+| `pilot.notion.db_threads_id` | `30e4c63b-efac-81a5-8b30-e0d6bac7fca9` |
+| `pilot.notion.db_turns_id` | `30e4c63b-efac-811e-b5f5-fdd9843f5760` |
+| `pilot.notion.db_outputs_id` | `30e4c63b-efac-819b-9e48-e5417fee4b37` |
+| `pilot.notion.db_research_inbox_id` | `30e4c63b-efac-81ad-b9b6-e472ff5a0599` |
+| `pilot.notion.db_research_library_id` | `30e4c63b-efac-8132-90d8-ee5f103d53f1` |
+| `pilot.notion.webhook_endpoint_url` | `https://ai-fluency-lab-pilot.vercel.app/api/notion/webhook` |
+| `pilot.root_problem_version_id` | `pilot-v1` |
 | `pilot.default_student_initial_credits` | `1` |
-| `pilot.operator_email` | `TBD` |
-| `pilot.test_allowlisted_email` | `TBD` |
-| `pilot.test_non_allowlisted_email` | `TBD` |
+| `pilot.operator_email` | `ajs10845@psu.edu` |
+| `pilot.test_allowlisted_email` | `ajs10845@psu.edu` |
+| `pilot.test_non_allowlisted_email` | `test+blocked@invalid.local` |
 
 ## Derivation rule
 

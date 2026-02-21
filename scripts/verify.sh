@@ -14,6 +14,11 @@ pass() {
   echo "[verify][PASS] $1"
 }
 
+has_rg=0
+if command -v rg >/dev/null 2>&1; then
+  has_rg=1
+fi
+
 expected_files=(
   "00_INDEX_AND_READING_ORDER.md"
   "01_AGENT_CHARTER_AND_LOCKED_RULES.md"
@@ -106,9 +111,17 @@ secret_patterns=(
 
 secret_hits=""
 for pattern in "${secret_patterns[@]}"; do
-  hits=$(rg -n --hidden --glob '!.git/**' --glob '!supabase/.temp/**' --glob '!scripts/verify.sh' -e "$pattern" . || true)
+  if [ "$has_rg" -eq 1 ]; then
+    hits=$(rg -n --hidden --glob '!.git/**' --glob '!supabase/.temp/**' --glob '!scripts/verify.sh' -e "$pattern" . || true)
+  else
+    hits=$(grep -RInE --exclude-dir=.git --exclude-dir=node_modules --exclude=scripts/verify.sh "$pattern" . || true)
+  fi
   if [ -n "$hits" ]; then
-    filtered=$(printf '%s\n' "$hits" | rg -v 'AI Fluency Lab Ops/|<Item>#<Field>|TBD|placeholder|example' || true)
+    if [ "$has_rg" -eq 1 ]; then
+      filtered=$(printf '%s\n' "$hits" | rg -v 'AI Fluency Lab Ops/|<Item>#<Field>|TBD|placeholder|example' || true)
+    else
+      filtered=$(printf '%s\n' "$hits" | grep -Ev 'AI Fluency Lab Ops/|<Item>#<Field>|TBD|placeholder|example' || true)
+    fi
     if [ -n "$filtered" ]; then
       secret_hits+="$filtered"$'\n'
     fi
