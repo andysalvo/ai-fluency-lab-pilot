@@ -1,5 +1,6 @@
 import type { RuntimeConfig } from "../adapters/env.js";
 import { DuplicateIngestKeyError, type PersistenceAdapter } from "../adapters/persistence.js";
+import { resolveProgramContext } from "./program-context.js";
 import { mapEventTypeToTriggerType } from "./router.js";
 import type { IngestResponse, NotionLikeWebhookPayload } from "./types.js";
 
@@ -49,6 +50,10 @@ function parsePayload(input: unknown): ParseResult {
       occurred_at: candidate.occurred_at!,
       idempotency_key: candidate.idempotency_key!.trim(),
       signature: typeof candidate.signature === "string" ? candidate.signature : undefined,
+      organization_id: typeof candidate.organization_id === "string" ? candidate.organization_id.trim() : undefined,
+      program_cycle_id: typeof candidate.program_cycle_id === "string" ? candidate.program_cycle_id.trim() : undefined,
+      root_problem_version_id:
+        typeof candidate.root_problem_version_id === "string" ? candidate.root_problem_version_id.trim() : undefined,
     },
   };
 }
@@ -68,6 +73,7 @@ export async function handleIngest(input: unknown, deps: IngestHandlerDeps): Pro
   }
 
   const payload = parsed.payload;
+  const programContext = resolveProgramContext(payload, deps.config);
   const triggerType = mapEventTypeToTriggerType(payload.event_type, deps.config);
 
   const existing = await deps.persistence.getIngestByIdempotencyKey(payload.idempotency_key);
@@ -89,6 +95,9 @@ export async function handleIngest(input: unknown, deps: IngestHandlerDeps): Pro
       trigger_type: triggerType,
       result_code: "DUPLICATE_SKIPPED",
       message: "Duplicate idempotency key detected. Execution skipped.",
+      organization_id: existing.organization_id,
+      program_cycle_id: existing.program_cycle_id,
+      root_problem_version_id: existing.root_problem_version_id,
     };
   }
 
@@ -99,6 +108,9 @@ export async function handleIngest(input: unknown, deps: IngestHandlerDeps): Pro
       source_record_id: payload.source_record_id,
       event_type: payload.event_type,
       idempotency_key: payload.idempotency_key,
+      organization_id: programContext.organization_id,
+      program_cycle_id: programContext.program_cycle_id,
+      root_problem_version_id: programContext.root_problem_version_id,
       ingest_state: "received",
     });
   } catch (error) {
@@ -109,6 +121,9 @@ export async function handleIngest(input: unknown, deps: IngestHandlerDeps): Pro
         trigger_type: triggerType,
         result_code: "DUPLICATE_SKIPPED",
         message: "Duplicate idempotency key detected during insert.",
+        organization_id: programContext.organization_id,
+        program_cycle_id: programContext.program_cycle_id,
+        root_problem_version_id: programContext.root_problem_version_id,
       };
     }
 
@@ -118,6 +133,9 @@ export async function handleIngest(input: unknown, deps: IngestHandlerDeps): Pro
       trigger_type: "unsupported",
       result_code: "INGEST_INSERT_FAILED",
       message: error instanceof Error ? error.message : "unknown insert failure",
+      organization_id: programContext.organization_id,
+      program_cycle_id: programContext.program_cycle_id,
+      root_problem_version_id: programContext.root_problem_version_id,
     };
   }
 
@@ -145,6 +163,9 @@ export async function handleIngest(input: unknown, deps: IngestHandlerDeps): Pro
       trigger_type: "unsupported",
       result_code: "TRIGGER_NOT_ALLOWED",
       message: "Only commit-event trigger types are allowed in Slice 1.",
+      organization_id: record.organization_id,
+      program_cycle_id: record.program_cycle_id,
+      root_problem_version_id: record.root_problem_version_id,
     };
   }
 
@@ -164,5 +185,8 @@ export async function handleIngest(input: unknown, deps: IngestHandlerDeps): Pro
     trigger_type: "local_commit",
     result_code: "INGEST_ACCEPTED",
     message: "Commit-event accepted for local_commit processing.",
+    organization_id: record.organization_id,
+    program_cycle_id: record.program_cycle_id,
+    root_problem_version_id: record.root_problem_version_id,
   };
 }

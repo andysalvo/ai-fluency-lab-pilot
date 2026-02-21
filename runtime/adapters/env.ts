@@ -12,6 +12,11 @@ export interface RuntimeConfig {
   supabase_url?: string;
   supabase_service_role_key?: string;
   operator_email?: string;
+  organization_id: string;
+  program_label: string;
+  program_cycle_id: string;
+  root_problem_version_id: string;
+  default_model: string;
 }
 
 function asAllowlistState(value: string | undefined): AllowlistState {
@@ -63,5 +68,10 @@ export function loadRuntimeConfig(env: Record<string, string | undefined>): Runt
     supabase_url: env.PILOT_SUPABASE_URL ?? env.SUPABASE_URL,
     supabase_service_role_key: env.PILOT_SUPABASE_SERVICE_ROLE_KEY ?? env.SUPABASE_SERVICE_ROLE_KEY,
     operator_email: env.PILOT_OPERATOR_EMAIL,
+    organization_id: env.PILOT_ORGANIZATION_ID ?? "applied-ai-labs",
+    program_label: env.PILOT_PROGRAM_LABEL ?? "AI Fluency Lab",
+    program_cycle_id: env.PILOT_ACTIVE_PROGRAM_CYCLE_ID ?? "cycle-innovation-day-001",
+    root_problem_version_id: env.PILOT_ROOT_PROBLEM_VERSION_ID ?? "pilot-v1",
+    default_model: env.PILOT_DEFAULT_MODEL ?? "gpt-4o-mini",
   };
 }
