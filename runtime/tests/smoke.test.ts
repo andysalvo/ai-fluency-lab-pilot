@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { loadRuntimeConfig } from "../adapters/env.js";
 import { InMemoryPersistenceAdapter } from "../adapters/inmemory.js";
+import type { IngestRecord, ProtectedActionAuditRecord } from "../core/types.js";
 import { handleRequest } from "../http/edge-entry.js";
+import type { IngestStateUpdate, PersistenceAdapter } from "../adapters/persistence.js";
 
 function makeDeps() {
   const persistence = new InMemoryPersistenceAdapter();
@@ -97,4 +99,46 @@ test("publish action is denied with deterministic reason code", async () => {
   const body = (await response.json()) as { reason_code: string; allowed: boolean };
   assert.equal(body.allowed, false);
   assert.equal(body.reason_code, "IDENTITY_UNRESOLVED");
+});
+
+class HealthModeAdapter implements PersistenceAdapter {
+  async getActiveIngressMode(): Promise<string | null> {
+    return "vercel_fallback";
+  }
+
+  async getIngestByIdempotencyKey(_idempotencyKey: string): Promise<IngestRecord | null> {
+    return null;
+  }
+
+  async insertIngest(_record: Omit<IngestRecord, "event_id" | "created_at">): Promise<IngestRecord> {
+    throw new Error("not needed in this test");
+  }
+
+  async updateIngestState(_eventId: string, _update: IngestStateUpdate): Promise<IngestRecord | null> {
+    return null;
+  }
+
+  async insertProtectedActionAudit(
+    _record: Omit<ProtectedActionAuditRecord, "audit_id" | "created_at">,
+  ): Promise<ProtectedActionAuditRecord> {
+    throw new Error("not needed in this test");
+  }
+}
+
+test("health resolves ingress mode from canonical source when available", async () => {
+  const config = loadRuntimeConfig({
+    PILOT_PERSISTENCE_BACKEND: "supabase",
+    PILOT_RUNTIME_ACTIVE_INGRESS_MODE: "supabase_edge",
+    PILOT_RUNTIME_INGRESS_MODE_SOURCE: "supabase.table.runtime_control.active_ingress_mode",
+  });
+
+  const response = await handleRequest(new Request("http://localhost/health"), {
+    config,
+    persistence: new HealthModeAdapter(),
+  });
+
+  assert.equal(response.status, 200);
+  const body = (await response.json()) as { active_ingress_mode: string; ingress_mode_source: string };
+  assert.equal(body.ingress_mode_source, "supabase.table.runtime_control.active_ingress_mode");
+  assert.equal(body.active_ingress_mode, "vercel_fallback");
 });

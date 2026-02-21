@@ -18,6 +18,8 @@ export class DuplicateIngestKeyError extends Error {
 }
 
 export interface PersistenceAdapter {
+  getActiveIngressMode(): Promise<string | null>;
+
   getIngestByIdempotencyKey(idempotencyKey: string): Promise<IngestRecord | null>;
 
   insertIngest(record: Omit<IngestRecord, "event_id" | "created_at"> & { event_id?: string; created_at?: string }): Promise<IngestRecord>;

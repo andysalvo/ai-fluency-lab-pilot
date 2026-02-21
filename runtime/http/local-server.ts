@@ -67,6 +67,6 @@ const server = createServer(async (req, res) => {
 });
 
 server.listen(port, () => {
-  console.log(`[slice1] local server listening on http://localhost:${port}`);
-  console.log("[slice1] health: curl -s http://localhost:8787/health | jq");
+  console.log(`[slice2] local server listening on http://localhost:${port}`);
+  console.log("[slice2] health: curl -s http://localhost:8787/health | jq");
 });
