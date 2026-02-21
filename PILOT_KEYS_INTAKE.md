@@ -30,6 +30,11 @@ Rules:
 | `pilot.supabase.edge_base_url` | https://pokhjgwokmimnccujvff.functions.supabase.co |
 | `pilot.runtime.persistence_backend` | supabase |
 | `pilot.runtime.ingress_mode_source` | supabase.table.runtime_control.active_ingress_mode |
+| `pilot.organization.id` | applied-ai-labs |
+| `pilot.organization.name` | Applied AI Labs |
+| `pilot.program.id` | ai-fluency-lab |
+| `pilot.program.name` | AI Fluency Lab |
+| `pilot.program.active_cycle_id` | cycle-innovation-day-001 |
 | `pilot.vercel.project_url` | ai-fluency-lab-pilot.vercel.app |
 | `pilot.vercel.project_id` | prj_drLPahvPwoqatTOdbKBbzN7uU7be |
 | `pilot.vercel.team_id` | team_o05ic4DW1kwnyefXmNd6RODN |
