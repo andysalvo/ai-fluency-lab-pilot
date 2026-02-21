@@ -28,6 +28,7 @@ Rules:
 | `pilot.supabase.project_url` | https://pokhjgwokmimnccujvff.supabase.co |
 | `pilot.supabase.project_ref` | pokhjgwokmimnccujvff |
 | `pilot.supabase.edge_base_url` | https://pokhjgwokmimnccujvff.functions.supabase.co |
+| `pilot.runtime.ingress_mode_source` | supabase.table.runtime_control.active_ingress_mode |
 | `pilot.vercel.project_url` | ai-fluency-lab-pilot.vercel.app |
 | `pilot.vercel.project_id` | prj_drLPahvPwoqatTOdbKBbzN7uU7be |
 | `pilot.vercel.team_id` | team_o05ic4DW1kwnyefXmNd6RODN |
