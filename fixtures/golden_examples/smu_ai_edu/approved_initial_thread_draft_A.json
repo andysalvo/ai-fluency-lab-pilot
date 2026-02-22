@@ -1,0 +1,13 @@
+{
+  "example_id": "smu_ai_edu_A",
+  "artifact_type": "initial_thread_draft",
+  "source_takeaway": "The source says AI can personalize learning and improve engagement, but schools must actively manage privacy, equity, and implementation quality.",
+  "student_note_takeaway": "The note frames fluency as judgment over time, not dependence on one specific tool.",
+  "combined_insight": "A durable AI fluency model should combine AI-assisted personalization with explicit practice in critical evaluation, policy awareness, and responsible use.",
+  "tension_or_assumption": "A common assumption is that more AI access automatically creates fluency, when fluency actually depends on repeated reasoning practice and clear guardrails.",
+  "next_best_move": "Run a two-week pilot where students submit one source and one short rationale, then compare claim/value/difference quality before and after guided refinement.",
+  "provenance": "Built only from: https://learningsciences.smu.edu/blog/artificial-intelligence-in-education",
+  "golden_example_id": "smu_ai_edu_A",
+  "prompt_contract_version": "initial_thread_draft_v1",
+  "model_name": "gpt-4.1"
+}

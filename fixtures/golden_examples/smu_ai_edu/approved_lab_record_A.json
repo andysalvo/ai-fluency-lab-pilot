@@ -1,0 +1,13 @@
+{
+  "example_id": "smu_ai_edu_A",
+  "artifact_type": "lab_record",
+  "what_it_is": "A proposal to treat AI fluency as a repeatable reasoning practice, not just familiarity with current tools.",
+  "why_it_matters": "If students build judgment under changing tools and norms, they can adapt faster and use AI responsibly over time.",
+  "evidence": "The SMU article shows both gains from personalization and risks around privacy, equity, and implementation, supporting a model that pairs AI use with structured human reasoning habits.",
+  "next_step": "Pilot a small cohort workflow with source-plus-note intake and evaluate improvement in claim/value/difference clarity after guided refinement rounds.",
+  "confidence": "medium",
+  "golden_example_id": "smu_ai_edu_A",
+  "prompt_contract_version": "lab_record_v1",
+  "model_name": "gpt-4.1",
+  "publish_expectation": "ready_after_confirmation"
+}

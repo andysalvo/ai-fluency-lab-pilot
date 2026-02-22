@@ -14,6 +14,7 @@ All artifacts are cycle-scoped; team members can only read/write within cycles w
 - Commit-event only.
 - Webhook ingest requires explicit `cycle_id`.
 - Duplicate ingest returns deterministic replay payload; no re-run.
+- Guided submit uses `POST /api/sources/submit` but still emits and processes a `local_commit` event.
 - Post-ingest handlers (cycle-scoped):
   - `team_intake` -> participant/membership sync
   - `research_inbox` -> source submission + thread + starter brief proposal
@@ -67,3 +68,4 @@ All artifacts are cycle-scoped; team members can only read/write within cycles w
 - Halted per cycle: `HALTED_CYCLE`
 - Locked cycle writes: `CYCLE_LOCKED`
 - Archived participant read: `CYCLE_ARCHIVED`
+- OAuth state mismatch: `STATE_INVALID`

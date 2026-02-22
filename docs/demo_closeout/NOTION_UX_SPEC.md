@@ -30,7 +30,8 @@ New frontstage:
 ## Team Surface (Visible)
 - `Applied AI Labs - AI Fluency at Smeal`
   - `What We’re Working On`
-  - `Research Inbox` (source intake)
+  - `Add a Source` -> guided form at `https://ai-fluency-lab-pilot.vercel.app/submit`
+  - `Research Inbox` (audit trail of submissions, not primary typing UI)
   - `My Work` (threads/turns + starter brief proposals)
   - `Lab Record`
 
@@ -42,9 +43,14 @@ New frontstage:
 
 ## Required DB/Property Notes
 - Every operational record must include `cycle_id`.
-- Source intake contract remains minimal:
+- Guided source intake contract remains minimal:
   - `url` (required)
   - `relevance_note` (required, <=500 chars)
+  - actor identity from signed session (or explicit payload fallback for testing)
+- Research Inbox database is auto-normalized by runtime to include:
+  - `url` (`source_url` alias supported)
+  - `relevance_note` (`note`/`relevance` aliases supported)
+  - `submitted_by` (`email` alias supported)
 - Team intake contract:
   - `email` (required)
   - `role` (`student|moderator|facilitator|operator`)
@@ -61,3 +67,4 @@ New frontstage:
 ## Canonical URLs (Current)
 - Frontstage: `https://www.notion.so/Applied-AI-Labs-AI-Fluency-at-Smeal-30e4c63befac81a6bccdee6c55253ece`
 - Operator Console: `https://www.notion.so/Operator-Console-30e4c63befac8139bfb8c5184278b362`
+- Guided intake surface: `https://ai-fluency-lab-pilot.vercel.app/submit`

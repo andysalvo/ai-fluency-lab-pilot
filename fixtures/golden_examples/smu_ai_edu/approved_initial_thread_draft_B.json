@@ -1,0 +1,13 @@
+{
+  "example_id": "smu_ai_edu_B",
+  "artifact_type": "initial_thread_draft",
+  "source_takeaway": "The source says AI may help schools personalize learning, but there are unresolved concerns about privacy, fairness, and rollout quality.",
+  "student_note_takeaway": "The note is general and does not clearly explain how this supports sustained fluency.",
+  "combined_insight": "AI can be part of school learning strategy, but this draft does not yet define a concrete mechanism for long-term fluency outcomes.",
+  "tension_or_assumption": "It assumes broader AI usage leads to better fluency without defining behaviors or evidence thresholds.",
+  "next_best_move": "Specify one measurable student behavior that would indicate improved fluency across multiple tools over time.",
+  "provenance": "Built only from: https://learningsciences.smu.edu/blog/artificial-intelligence-in-education",
+  "golden_example_id": "smu_ai_edu_B",
+  "prompt_contract_version": "initial_thread_draft_v1",
+  "model_name": "gpt-4.1"
+}

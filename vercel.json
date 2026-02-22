@@ -9,6 +9,18 @@
       "destination": "/api/handler?raw_path=/health"
     },
     {
+      "source": "/submit",
+      "destination": "/api/handler?raw_path=/submit"
+    },
+    {
+      "source": "/app",
+      "destination": "/api/handler?raw_path=/app"
+    },
+    {
+      "source": "/thread",
+      "destination": "/api/handler?raw_path=/thread"
+    },
+    {
       "source": "/api/(.*)",
       "destination": "/api/handler?raw_path=/api/$1"
     }

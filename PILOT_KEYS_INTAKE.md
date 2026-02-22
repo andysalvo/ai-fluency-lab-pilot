@@ -17,6 +17,7 @@ Rules:
 | `pilot.vercel.token` | `AI Fluency Lab Ops/AI-LAB-PILOT-VERCEL#token` |
 | `pilot.sso.google_client_id` | AI Fluency Lab Ops/AI-LAB-PILOT-GOOGLE-SSO#client_id |
 | `pilot.sso.google_client_secret` | AI Fluency Lab Ops/AI-LAB-PILOT-GOOGLE-SSO#client_secret |
+| `pilot.runtime.session_secret` | AI Fluency Lab Ops/AI-LAB-PILOT-API#session_secret |
 | `pilot.openai.api_key` | `AI Fluency Lab Ops/AI-LAB-PILOT-OPENAI#api_key` |
 | `pilot.notion.integration_token` | AI Fluency Lab Ops/AI-LAB-PILOT-API#integration_token |
 | `pilot.notion.webhook_secret` | AI Fluency Lab Ops/AI-LAB-PILOT-API#webhook_secret |

@@ -1,0 +1,13 @@
+{
+  "example_id": "smu_ai_edu_B",
+  "artifact_type": "lab_record_candidate",
+  "what_it_is": "A broad claim that schools should increase AI use in education.",
+  "why_it_matters": "More AI exposure might help students keep up with changing technology.",
+  "evidence": "The source discusses AI opportunities and risks, but this candidate does not yet tie evidence to a specific sustained-fluency mechanism.",
+  "next_step": "Add one measurable outcome and one source-grounded contrast before re-running readiness.",
+  "confidence": "low",
+  "golden_example_id": "smu_ai_edu_B",
+  "prompt_contract_version": "lab_record_v1",
+  "model_name": "gpt-4.1",
+  "publish_expectation": "blocked_candidate"
+}

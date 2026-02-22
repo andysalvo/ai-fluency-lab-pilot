@@ -18,6 +18,31 @@ Use Notion + Supabase + Vercel to run a cycle-scoped, safe, agentic collaboratio
 - Decision: source commit-event path is `research_inbox` -> auto thread -> starter brief proposal -> visible surface update.
 - Decision: starter brief uses `OpenAI + deterministic fallback` and always includes provenance label `Built only from: <URL>`.
 - Decision: Supabase adapter is now the live-path implementation (no fail-fast stubs on pilot path).
+- Decision: primary student intake is now guided software UI (`GET /submit`) to avoid direct Notion table interaction errors.
+- Decision: guided submit API (`POST /api/sources/submit`) is cycle-scoped, idempotent, and still commit-event only.
+- Decision: Google OAuth now supports production auth code exchange (`/api/auth/google/start` -> `/api/auth/callback/google`) with signed state.
+- Decision: session cookie stores explicit active cycle context; runtime still re-checks membership and cycle state server-side every request.
+- Decision: operator scale visibility added via `GET /api/operator/summary` (ingest/publish/blocked-code counts).
+
+## Card Presentation Stabilization (Demo Safety)
+- Decision: frontstage now renders through one `CardViewModel` mapping layer so thread artifacts are formatted consistently and can be tuned in one place.
+- Decision: provenance and metadata remain required, but are collapsed under `Details` in both Vercel cards and Notion card blocks to keep primary reading flow focused.
+- Decision: thread mutation endpoints (`/api/questions/round/start`, `/api/questions/answer`, `/api/lab-brief/propose`) now resolve through one orchestration guard path in `edge-entry.ts`.
+- Decision: readiness logic is computed by `evaluateReadiness` only; guided-round logic now emits signals and defers reason-code evaluation to the canonical readiness module.
+- Decision: Notion write-back is deterministic and best-effort idempotent (idempotency key lookup when available, title fallback) with non-blocking failure logging.
+- Decision: Kimi planner routing is env-gated (`PILOT_USE_KIMI_PLANNER=true`) and applies to starter draft, guided rounds, and lab brief proposal; fallback remains deterministic and readable.
+- Decision: planner telemetry (`model_runs`) is strictly non-blocking and uses contracted status + fallback reasons only (`success|fallback` with `TIMEOUT|RATE_LIMIT|SCHEMA|CAPACITY`).
+- Decision: Kimi is now primary for all generation paths (starter draft, guided questions, lab brief proposal) when enabled, with immediate deterministic readable fallback on timeout/rate-limit/schema/capacity.
+- Decision: student synthesis output is now a strict 5-Sentence Insight Card framing:
+  1. Core idea
+  2. Student pattern
+  3. Key tension
+  4. Strategic implication
+  5. Cohort question
+- Decision: guided-round language contract is `guided_round_v2` with 14-word option cap and plain consultant-style prompts.
+- Decision: lab-brief language contract is `lab_brief_proposal_v2` with 22-word sentence cap and student-readable tone.
+- Decision: student status wording for incomplete quality state is now `Needs one more pass`.
+- Decision: operator fallback gate is documented: if planner fallback rate exceeds 25% across rolling 50 runs, temporarily switch to deterministic-first mode.
 
 ## Alternatives Rejected
 - Rejected: default to "current cycle" from config.
@@ -35,4 +60,5 @@ Use Notion + Supabase + Vercel to run a cycle-scoped, safe, agentic collaboratio
 
 ## Deviations
 - Logo asset was applied as `/branding/applied-ai-labs-logo.svg` for deterministic rendering in this environment.
+- Notion sharing/membership remains one manual operator step by Notion platform design (cannot be fully API-automated for guests).
 - Remaining deferred scope is documented in `REAL_VS_STUBBED.md`.

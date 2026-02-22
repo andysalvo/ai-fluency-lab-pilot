@@ -4,7 +4,11 @@ import type {
   CycleSnapshotArtifactRecord,
   CycleSnapshotRecord,
   IngestRecord,
+  GuidedQuestionItemRecord,
+  GuidedRoundRecord,
+  LabBriefDraftRecord,
   LabRecordEntry,
+  ModelRunRecord,
   ParticipantRecord,
   PublishTxnInput,
   PublishTxnResult,
@@ -39,6 +43,10 @@ function membershipKey(participantId: string, organizationId: string, cycleId: s
   return `${participantId}::${organizationId}::${cycleId}`;
 }
 
+function threadCycleKey(threadId: string, cycleId: string): string {
+  return `${threadId}::${cycleId}`;
+}
+
 export class InMemoryPersistenceAdapter implements PersistenceAdapter {
   private readonly ingestByEventId = new Map<string, IngestRecord>();
   private readonly eventIdByIdempotencyKey = new Map<string, string>();
@@ -54,7 +62,11 @@ export class InMemoryPersistenceAdapter implements PersistenceAdapter {
   private readonly threadsById = new Map<string, RuntimeThreadRecord>();
   private readonly sourcesById = new Map<string, SourceSubmissionRecord>();
   private readonly briefsById = new Map<string, StarterBriefRecord>();
+  private readonly guidedRoundsById = new Map<string, GuidedRoundRecord>();
+  private readonly guidedItemsById = new Map<string, GuidedQuestionItemRecord>();
+  private readonly labBriefDraftByThreadCycle = new Map<string, LabBriefDraftRecord>();
   private readonly labRecordsById = new Map<string, LabRecordEntry>();
+  private readonly modelRunsById = new Map<string, ModelRunRecord>();
   private readonly publishReplayByIdempotencyKey = new Map<string, PublishTxnResult>();
 
   private runtimeControl: RuntimeControlRecord = {
@@ -372,6 +384,13 @@ export class InMemoryPersistenceAdapter implements PersistenceAdapter {
       .map((row) => clone(row));
   }
 
+  async listSourcesForCycle(cycleId: string): Promise<SourceSubmissionRecord[]> {
+    return [...this.sourcesById.values()]
+      .filter((row) => row.cycle_id === cycleId)
+      .sort((a, b) => a.created_at.localeCompare(b.created_at))
+      .map((row) => clone(row));
+  }
+
   async listVisibleStarterBriefs(participantId: string, cycleId: string): Promise<StarterBriefRecord[]> {
     const ownedThreadIds = new Set(
       [...this.threadsById.values()]
@@ -385,10 +404,222 @@ export class InMemoryPersistenceAdapter implements PersistenceAdapter {
       .map((row) => clone(row));
   }
 
+  async listStarterBriefsForCycle(cycleId: string): Promise<StarterBriefRecord[]> {
+    return [...this.briefsById.values()]
+      .filter((row) => row.cycle_id === cycleId)
+      .sort((a, b) => a.created_at.localeCompare(b.created_at))
+      .map((row) => clone(row));
+  }
+
   async listVisibleLabRecord(cycleId: string): Promise<LabRecordEntry[]> {
     return [...this.labRecordsById.values()]
       .filter((row) => row.cycle_id === cycleId)
       .sort((a, b) => a.created_at.localeCompare(b.created_at))
+      .map((row) => clone(row));
+  }
+
+  async listLabRecordForThread(threadId: string, cycleId: string): Promise<LabRecordEntry[]> {
+    return [...this.labRecordsById.values()]
+      .filter((row) => row.thread_id === threadId && row.cycle_id === cycleId)
+      .sort((a, b) => a.version - b.version)
+      .map((row) => clone(row));
+  }
+
+  async listSourcesForThread(threadId: string, cycleId: string): Promise<SourceSubmissionRecord[]> {
+    return [...this.sourcesById.values()]
+      .filter((row) => row.thread_id === threadId && row.cycle_id === cycleId)
+      .sort((a, b) => a.created_at.localeCompare(b.created_at))
+      .map((row) => clone(row));
+  }
+
+  async listStarterBriefsForThread(threadId: string, cycleId: string): Promise<StarterBriefRecord[]> {
+    return [...this.briefsById.values()]
+      .filter((row) => row.thread_id === threadId && row.cycle_id === cycleId)
+      .sort((a, b) => a.created_at.localeCompare(b.created_at))
+      .map((row) => clone(row));
+  }
+
+  async listGuidedRoundsForThread(threadId: string, cycleId: string): Promise<GuidedRoundRecord[]> {
+    return [...this.guidedRoundsById.values()]
+      .filter((row) => row.thread_id === threadId && row.cycle_id === cycleId)
+      .sort((a, b) => a.round_number - b.round_number)
+      .map((row) => clone(row));
+  }
+
+  async listGuidedRoundsForCycle(cycleId: string): Promise<GuidedRoundRecord[]> {
+    return [...this.guidedRoundsById.values()]
+      .filter((row) => row.cycle_id === cycleId)
+      .sort((a, b) => a.created_at.localeCompare(b.created_at))
+      .map((row) => clone(row));
+  }
+
+  async createGuidedRound(
+    record: Omit<GuidedRoundRecord, "round_id" | "created_at" | "updated_at"> & {
+      round_id?: string;
+      created_at?: string;
+      updated_at?: string;
+    },
+  ): Promise<GuidedRoundRecord> {
+    const roundId = record.round_id ?? makeId("round");
+    const next: GuidedRoundRecord = {
+      ...record,
+      round_id: roundId,
+      created_at: record.created_at ?? new Date().toISOString(),
+      updated_at: record.updated_at ?? new Date().toISOString(),
+    };
+    this.guidedRoundsById.set(roundId, clone(next));
+    return clone(next);
+  }
+
+  async completeGuidedRound(roundId: string, summary: string, completedAt: string, updatedAt: string): Promise<GuidedRoundRecord | null> {
+    const current = this.guidedRoundsById.get(roundId);
+    if (!current) {
+      return null;
+    }
+
+    const next: GuidedRoundRecord = {
+      ...current,
+      status: "completed",
+      summary,
+      completed_at: completedAt,
+      updated_at: updatedAt,
+    };
+    this.guidedRoundsById.set(roundId, clone(next));
+    return clone(next);
+  }
+
+  async listGuidedQuestionItems(roundId: string): Promise<GuidedQuestionItemRecord[]> {
+    return [...this.guidedItemsById.values()]
+      .filter((row) => row.round_id === roundId)
+      .sort((a, b) => a.ordinal - b.ordinal)
+      .map((row) => clone(row));
+  }
+
+  async insertGuidedQuestionItems(
+    items: Array<Omit<GuidedQuestionItemRecord, "question_item_id" | "created_at" | "updated_at"> & {
+      question_item_id?: string;
+      created_at?: string;
+      updated_at?: string;
+    }>,
+  ): Promise<GuidedQuestionItemRecord[]> {
+    const now = new Date().toISOString();
+    const created = items.map((item) => {
+      const record: GuidedQuestionItemRecord = {
+        ...item,
+        question_item_id: item.question_item_id ?? makeId("q"),
+        created_at: item.created_at ?? now,
+        updated_at: item.updated_at ?? now,
+      };
+      this.guidedItemsById.set(record.question_item_id, clone(record));
+      return clone(record);
+    });
+
+    return created;
+  }
+
+  async answerGuidedQuestionItem(
+    questionItemId: string,
+    update: {
+      selected_option: GuidedQuestionItemRecord["selected_option"];
+      short_reason?: string;
+      answered_at: string;
+      updated_at?: string;
+    },
+  ): Promise<GuidedQuestionItemRecord | null> {
+    const current = this.guidedItemsById.get(questionItemId);
+    if (!current) {
+      return null;
+    }
+
+    const next: GuidedQuestionItemRecord = {
+      ...current,
+      selected_option: update.selected_option,
+      short_reason: update.short_reason ?? current.short_reason,
+      answered_at: update.answered_at,
+      updated_at: update.updated_at ?? new Date().toISOString(),
+    };
+    this.guidedItemsById.set(questionItemId, clone(next));
+    return clone(next);
+  }
+
+  async getLabBriefDraftForThread(threadId: string, cycleId: string): Promise<LabBriefDraftRecord | null> {
+    const row = this.labBriefDraftByThreadCycle.get(threadCycleKey(threadId, cycleId));
+    return row ? clone(row) : null;
+  }
+
+  async upsertLabBriefDraft(
+    record: Omit<LabBriefDraftRecord, "draft_id" | "created_at" | "updated_at"> & {
+      draft_id?: string;
+      created_at?: string;
+      updated_at?: string;
+    },
+  ): Promise<LabBriefDraftRecord> {
+    const key = threadCycleKey(record.thread_id, record.cycle_id);
+    const current = this.labBriefDraftByThreadCycle.get(key);
+    const next: LabBriefDraftRecord = {
+      ...current,
+      ...record,
+      draft_id: current?.draft_id ?? record.draft_id ?? makeId("draft"),
+      created_at: current?.created_at ?? record.created_at ?? new Date().toISOString(),
+      updated_at: record.updated_at ?? new Date().toISOString(),
+    };
+
+    this.labBriefDraftByThreadCycle.set(key, clone(next));
+    return clone(next);
+  }
+
+  async listLabBriefDraftsForCycle(cycleId: string): Promise<LabBriefDraftRecord[]> {
+    return [...this.labBriefDraftByThreadCycle.values()]
+      .filter((row) => row.cycle_id === cycleId)
+      .sort((a, b) => a.created_at.localeCompare(b.created_at))
+      .map((row) => clone(row));
+  }
+
+  async insertModelRun(
+    record: Omit<ModelRunRecord, "run_id" | "created_at"> & { run_id?: string; created_at?: string },
+  ): Promise<ModelRunRecord> {
+    const runId = record.run_id ?? makeId("model-run");
+    const next: ModelRunRecord = {
+      ...record,
+      run_id: runId,
+      created_at: record.created_at ?? new Date().toISOString(),
+    };
+    this.modelRunsById.set(runId, clone(next));
+    return clone(next);
+  }
+
+  async listModelRunsForCycle(organizationId: string, cycleId: string, limit = 200): Promise<ModelRunRecord[]> {
+    return [...this.modelRunsById.values()]
+      .filter((row) => row.organization_id === organizationId && row.cycle_id === cycleId)
+      .sort((a, b) => b.created_at.localeCompare(a.created_at))
+      .slice(0, Math.max(1, limit))
+      .map((row) => clone(row));
+  }
+
+  async listCycleMemberships(organizationId: string, cycleId: string): Promise<CycleMembershipRecord[]> {
+    return [...this.membershipsByKey.values()]
+      .filter((row) => row.organization_id === organizationId && row.cycle_id === cycleId)
+      .sort((a, b) => b.updated_at.localeCompare(a.updated_at))
+      .map((row) => clone(row));
+  }
+
+  async listIngestForCycle(organizationId: string, cycleId: string, limit = 200): Promise<IngestRecord[]> {
+    return [...this.ingestByEventId.values()]
+      .filter((row) => row.organization_id === organizationId && row.cycle_id === cycleId)
+      .sort((a, b) => b.created_at.localeCompare(a.created_at))
+      .slice(0, limit)
+      .map((row) => clone(row));
+  }
+
+  async listProtectedActionAuditsForCycle(
+    organizationId: string,
+    cycleId: string,
+    limit = 200,
+  ): Promise<ProtectedActionAuditRecord[]> {
+    return [...this.auditById.values()]
+      .filter((row) => row.organization_id === organizationId && row.cycle_id === cycleId)
+      .sort((a, b) => b.created_at.localeCompare(a.created_at))
+      .slice(0, limit)
       .map((row) => clone(row));
   }
 

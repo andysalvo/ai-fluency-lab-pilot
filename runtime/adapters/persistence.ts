@@ -6,6 +6,8 @@ import type {
   IngestRecord,
   IngestState,
   LabRecordEntry,
+  ModelRunRecord,
+  LabBriefDraftRecord,
   ParticipantRecord,
   PublishTxnInput,
   PublishTxnResult,
@@ -17,6 +19,8 @@ import type {
   SessionContextRecord,
   SourceSubmissionRecord,
   StarterBriefRecord,
+  GuidedRoundRecord,
+  GuidedQuestionItemRecord,
 } from "../core/types.js";
 
 export interface IngestStateUpdate {
@@ -111,9 +115,77 @@ export interface PersistenceAdapter {
 
   listVisibleSources(participantId: string, cycleId: string): Promise<SourceSubmissionRecord[]>;
 
+  listSourcesForCycle(cycleId: string): Promise<SourceSubmissionRecord[]>;
+
   listVisibleStarterBriefs(participantId: string, cycleId: string): Promise<StarterBriefRecord[]>;
 
+  listStarterBriefsForCycle(cycleId: string): Promise<StarterBriefRecord[]>;
+
   listVisibleLabRecord(cycleId: string): Promise<LabRecordEntry[]>;
+
+  listLabRecordForThread(threadId: string, cycleId: string): Promise<LabRecordEntry[]>;
+
+  listSourcesForThread(threadId: string, cycleId: string): Promise<SourceSubmissionRecord[]>;
+
+  listStarterBriefsForThread(threadId: string, cycleId: string): Promise<StarterBriefRecord[]>;
+
+  listGuidedRoundsForThread(threadId: string, cycleId: string): Promise<GuidedRoundRecord[]>;
+
+  listGuidedRoundsForCycle(cycleId: string): Promise<GuidedRoundRecord[]>;
+
+  createGuidedRound(
+    record: Omit<GuidedRoundRecord, "round_id" | "created_at" | "updated_at"> & { round_id?: string; created_at?: string; updated_at?: string },
+  ): Promise<GuidedRoundRecord>;
+
+  completeGuidedRound(roundId: string, summary: string, completedAt: string, updatedAt: string): Promise<GuidedRoundRecord | null>;
+
+  listGuidedQuestionItems(roundId: string): Promise<GuidedQuestionItemRecord[]>;
+
+  insertGuidedQuestionItems(
+    items: Array<Omit<GuidedQuestionItemRecord, "question_item_id" | "created_at" | "updated_at"> & {
+      question_item_id?: string;
+      created_at?: string;
+      updated_at?: string;
+    }>,
+  ): Promise<GuidedQuestionItemRecord[]>;
+
+  answerGuidedQuestionItem(
+    questionItemId: string,
+    update: {
+      selected_option: GuidedQuestionItemRecord["selected_option"];
+      short_reason?: string;
+      answered_at: string;
+      updated_at?: string;
+    },
+  ): Promise<GuidedQuestionItemRecord | null>;
+
+  getLabBriefDraftForThread(threadId: string, cycleId: string): Promise<LabBriefDraftRecord | null>;
+
+  upsertLabBriefDraft(
+    record: Omit<LabBriefDraftRecord, "draft_id" | "created_at" | "updated_at"> & {
+      draft_id?: string;
+      created_at?: string;
+      updated_at?: string;
+    },
+  ): Promise<LabBriefDraftRecord>;
+
+  listLabBriefDraftsForCycle(cycleId: string): Promise<LabBriefDraftRecord[]>;
+
+  insertModelRun(
+    record: Omit<ModelRunRecord, "run_id" | "created_at"> & { run_id?: string; created_at?: string },
+  ): Promise<ModelRunRecord>;
+
+  listModelRunsForCycle(organizationId: string, cycleId: string, limit?: number): Promise<ModelRunRecord[]>;
+
+  listCycleMemberships(organizationId: string, cycleId: string): Promise<CycleMembershipRecord[]>;
+
+  listIngestForCycle(organizationId: string, cycleId: string, limit?: number): Promise<IngestRecord[]>;
+
+  listProtectedActionAuditsForCycle(
+    organizationId: string,
+    cycleId: string,
+    limit?: number,
+  ): Promise<ProtectedActionAuditRecord[]>;
 
   publishLabRecordTxn(input: PublishTxnInput): Promise<PublishTxnResult>;
 

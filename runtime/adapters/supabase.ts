@@ -3,8 +3,12 @@ import type {
   CycleMembershipRecord,
   CycleSnapshotArtifactRecord,
   CycleSnapshotRecord,
+  GuidedQuestionItemRecord,
+  GuidedRoundRecord,
   IngestRecord,
+  LabBriefDraftRecord,
   LabRecordEntry,
+  ModelRunRecord,
   ParticipantRecord,
   PublishTxnInput,
   PublishTxnResult,
@@ -53,6 +57,13 @@ function asNumber(value: unknown, fallback = 0): number {
 
 function asBoolean(value: unknown, fallback = false): boolean {
   return typeof value === "boolean" ? value : fallback;
+}
+
+function asPlannerFallbackReason(value: unknown): ModelRunRecord["fallback_reason"] {
+  if (value === "TIMEOUT" || value === "RATE_LIMIT" || value === "SCHEMA" || value === "CAPACITY") {
+    return value;
+  }
+  return undefined;
 }
 
 function joinError(error: SupabaseError): string {
@@ -254,6 +265,71 @@ export class SupabasePersistenceAdapter implements PersistenceAdapter {
     };
   }
 
+  private mapGuidedRound(row: Record<string, unknown>): GuidedRoundRecord {
+    return {
+      round_id: asString(row.round_id),
+      thread_id: asString(row.thread_id),
+      organization_id: asString(row.organization_id),
+      cycle_id: asString(row.cycle_id),
+      root_problem_version_id: asString(row.root_problem_version_id),
+      participant_id: asString(row.participant_id),
+      round_number: asNumber(row.round_number),
+      status: asString(row.status) as GuidedRoundRecord["status"],
+      summary: toIsoOrUndefined(row.summary),
+      created_at: asString(row.created_at),
+      updated_at: asString(row.updated_at),
+      completed_at: toIsoOrUndefined(row.completed_at),
+    };
+  }
+
+  private mapGuidedQuestionItem(row: Record<string, unknown>): GuidedQuestionItemRecord {
+    const optionsRaw = row.options_json ?? row.options;
+    const options = Array.isArray(optionsRaw)
+      ? optionsRaw
+          .map((item) => asObject(item))
+          .map((item) => ({
+            code: asString(item.code) as GuidedQuestionItemRecord["recommended_option"],
+            text: asString(item.text),
+          }))
+          .filter((item) => item.code && item.text)
+      : [];
+
+    return {
+      question_item_id: asString(row.question_item_id),
+      round_id: asString(row.round_id),
+      thread_id: asString(row.thread_id),
+      organization_id: asString(row.organization_id),
+      cycle_id: asString(row.cycle_id),
+      root_problem_version_id: asString(row.root_problem_version_id),
+      participant_id: asString(row.participant_id),
+      ordinal: asNumber(row.ordinal),
+      prompt: asString(row.prompt),
+      options,
+      recommended_option: asString(row.recommended_option) as GuidedQuestionItemRecord["recommended_option"],
+      selected_option: toIsoOrUndefined(row.selected_option) as GuidedQuestionItemRecord["selected_option"],
+      short_reason: toIsoOrUndefined(row.short_reason),
+      answered_at: toIsoOrUndefined(row.answered_at),
+      created_at: asString(row.created_at),
+      updated_at: asString(row.updated_at),
+    };
+  }
+
+  private mapLabBriefDraft(row: Record<string, unknown>): LabBriefDraftRecord {
+    return {
+      draft_id: asString(row.draft_id),
+      thread_id: asString(row.thread_id),
+      organization_id: asString(row.organization_id),
+      cycle_id: asString(row.cycle_id),
+      root_problem_version_id: asString(row.root_problem_version_id),
+      participant_id: asString(row.participant_id),
+      status: asString(row.status) as LabBriefDraftRecord["status"],
+      content: asObject(row.content_json ?? row.content),
+      generation_metadata: asObject(row.generation_metadata_json ?? row.generation_metadata),
+      created_at: asString(row.created_at),
+      updated_at: asString(row.updated_at),
+    };
+  }
+
   private mapCycle(row: Record<string, unknown>): ProgramCycleRecord {
     return {
       organization_id: asString(row.organization_id),
@@ -310,6 +386,26 @@ export class SupabasePersistenceAdapter implements PersistenceAdapter {
       organization_id: asString(row.organization_id),
       cycle_id: asString(row.cycle_id),
       root_problem_version_id: asString(row.root_problem_version_id),
+    };
+  }
+
+  private mapModelRun(row: Record<string, unknown>): ModelRunRecord {
+    return {
+      run_id: asString(row.run_id),
+      organization_id: asString(row.organization_id),
+      cycle_id: asString(row.cycle_id),
+      root_problem_version_id: asString(row.root_problem_version_id),
+      thread_id: toIsoOrUndefined(row.thread_id),
+      participant_id: toIsoOrUndefined(row.participant_id),
+      action_type: asString(row.action_type) as ModelRunRecord["action_type"],
+      provider: asString(row.provider) as ModelRunRecord["provider"],
+      model_name: asString(row.model_name),
+      status: asString(row.status) as ModelRunRecord["status"],
+      prompt_contract_version: asString(row.prompt_contract_version),
+      latency_ms: asNumber(row.latency_ms),
+      estimated_cost_usd: typeof row.estimated_cost_usd === "number" ? row.estimated_cost_usd : undefined,
+      fallback_reason: asPlannerFallbackReason(row.fallback_reason),
+      created_at: asString(row.created_at),
     };
   }
 
@@ -951,6 +1047,19 @@ export class SupabasePersistenceAdapter implements PersistenceAdapter {
     return rows.map((row) => this.mapSource(asObject(row)));
   }
 
+  async listSourcesForCycle(cycleId: string): Promise<SourceSubmissionRecord[]> {
+    const url = this.tableUrl("source_submissions", {
+      select: "*",
+      cycle_id: `eq.${cycleId}`,
+      order: "created_at.asc",
+    });
+
+    const response = await this.request("GET", url);
+    const payload = await this.expectOk(response);
+    const rows = Array.isArray(payload) ? payload : [];
+    return rows.map((row) => this.mapSource(asObject(row)));
+  }
+
   async listVisibleStarterBriefs(participantId: string, cycleId: string): Promise<StarterBriefRecord[]> {
     const threadRows = await this.listVisibleThreads(participantId, cycleId);
     if (threadRows.length === 0) {
@@ -971,6 +1080,18 @@ export class SupabasePersistenceAdapter implements PersistenceAdapter {
       .filter((row) => threadIdSet.has(row.thread_id));
   }
 
+  async listStarterBriefsForCycle(cycleId: string): Promise<StarterBriefRecord[]> {
+    const url = this.tableUrl("starter_briefs", {
+      select: "*",
+      cycle_id: `eq.${cycleId}`,
+      order: "created_at.asc",
+    });
+    const response = await this.request("GET", url);
+    const payload = await this.expectOk(response);
+    const rows = Array.isArray(payload) ? payload : [];
+    return rows.map((row) => this.mapStarterBrief(asObject(row)));
+  }
+
   async listVisibleLabRecord(cycleId: string): Promise<LabRecordEntry[]> {
     const url = this.tableUrl("lab_record_entries", {
       select: "*",
@@ -981,6 +1102,371 @@ export class SupabasePersistenceAdapter implements PersistenceAdapter {
     const payload = await this.expectOk(response);
     const rows = Array.isArray(payload) ? payload : [];
     return rows.map((row) => this.mapLabRecord(asObject(row)));
+  }
+
+  async listLabRecordForThread(threadId: string, cycleId: string): Promise<LabRecordEntry[]> {
+    const url = this.tableUrl("lab_record_entries", {
+      select: "*",
+      cycle_id: `eq.${cycleId}`,
+      thread_id: `eq.${threadId}`,
+      order: "version.asc",
+    });
+    const response = await this.request("GET", url);
+    const payload = await this.expectOk(response);
+    const rows = Array.isArray(payload) ? payload : [];
+    return rows.map((row) => this.mapLabRecord(asObject(row)));
+  }
+
+  async listSourcesForThread(threadId: string, cycleId: string): Promise<SourceSubmissionRecord[]> {
+    const url = this.tableUrl("source_submissions", {
+      select: "*",
+      cycle_id: `eq.${cycleId}`,
+      thread_id: `eq.${threadId}`,
+      order: "created_at.asc",
+    });
+    const response = await this.request("GET", url);
+    const payload = await this.expectOk(response);
+    const rows = Array.isArray(payload) ? payload : [];
+    return rows.map((row) => this.mapSource(asObject(row)));
+  }
+
+  async listStarterBriefsForThread(threadId: string, cycleId: string): Promise<StarterBriefRecord[]> {
+    const url = this.tableUrl("starter_briefs", {
+      select: "*",
+      cycle_id: `eq.${cycleId}`,
+      thread_id: `eq.${threadId}`,
+      order: "created_at.asc",
+    });
+    const response = await this.request("GET", url);
+    const payload = await this.expectOk(response);
+    const rows = Array.isArray(payload) ? payload : [];
+    return rows.map((row) => this.mapStarterBrief(asObject(row)));
+  }
+
+  async listGuidedRoundsForThread(threadId: string, cycleId: string): Promise<GuidedRoundRecord[]> {
+    const url = this.tableUrl("guided_question_rounds", {
+      select: "*",
+      cycle_id: `eq.${cycleId}`,
+      thread_id: `eq.${threadId}`,
+      order: "round_number.asc",
+    });
+    const response = await this.request("GET", url);
+    const payload = await this.expectOk(response);
+    const rows = Array.isArray(payload) ? payload : [];
+    return rows.map((row) => this.mapGuidedRound(asObject(row)));
+  }
+
+  async listGuidedRoundsForCycle(cycleId: string): Promise<GuidedRoundRecord[]> {
+    const url = this.tableUrl("guided_question_rounds", {
+      select: "*",
+      cycle_id: `eq.${cycleId}`,
+      order: "created_at.asc",
+    });
+    const response = await this.request("GET", url);
+    const payload = await this.expectOk(response);
+    const rows = Array.isArray(payload) ? payload : [];
+    return rows.map((row) => this.mapGuidedRound(asObject(row)));
+  }
+
+  async createGuidedRound(
+    record: Omit<GuidedRoundRecord, "round_id" | "created_at" | "updated_at"> & {
+      round_id?: string;
+      created_at?: string;
+      updated_at?: string;
+    },
+  ): Promise<GuidedRoundRecord> {
+    const url = this.tableUrl("guided_question_rounds", { select: "*" });
+    const response = await this.request(
+      "POST",
+      url,
+      {
+        round_id: maybeUuid(record.round_id),
+        thread_id: record.thread_id,
+        organization_id: record.organization_id,
+        cycle_id: record.cycle_id,
+        root_problem_version_id: record.root_problem_version_id,
+        participant_id: maybeUuid(record.participant_id),
+        round_number: record.round_number,
+        status: record.status,
+        summary: record.summary,
+        completed_at: record.completed_at,
+        created_at: record.created_at,
+        updated_at: record.updated_at,
+      },
+      { Prefer: "return=representation" },
+    );
+    const payload = await this.expectOk(response);
+    const rows = Array.isArray(payload) ? payload : [];
+    if (rows.length === 0) {
+      throw new Error("createGuidedRound returned no rows");
+    }
+    return this.mapGuidedRound(asObject(rows[0]));
+  }
+
+  async completeGuidedRound(roundId: string, summary: string, completedAt: string, updatedAt: string): Promise<GuidedRoundRecord | null> {
+    const url = this.tableUrl("guided_question_rounds", {
+      select: "*",
+      round_id: `eq.${roundId}`,
+    });
+    const response = await this.request(
+      "PATCH",
+      url,
+      {
+        status: "completed",
+        summary,
+        completed_at: completedAt,
+        updated_at: updatedAt,
+      },
+      { Prefer: "return=representation" },
+    );
+    const payload = await this.expectOk(response);
+    const rows = Array.isArray(payload) ? payload : [];
+    if (rows.length === 0) {
+      return null;
+    }
+    return this.mapGuidedRound(asObject(rows[0]));
+  }
+
+  async listGuidedQuestionItems(roundId: string): Promise<GuidedQuestionItemRecord[]> {
+    const url = this.tableUrl("guided_question_items", {
+      select: "*",
+      round_id: `eq.${roundId}`,
+      order: "ordinal.asc",
+    });
+    const response = await this.request("GET", url);
+    const payload = await this.expectOk(response);
+    const rows = Array.isArray(payload) ? payload : [];
+    return rows.map((row) => this.mapGuidedQuestionItem(asObject(row)));
+  }
+
+  async insertGuidedQuestionItems(
+    items: Array<Omit<GuidedQuestionItemRecord, "question_item_id" | "created_at" | "updated_at"> & {
+      question_item_id?: string;
+      created_at?: string;
+      updated_at?: string;
+    }>,
+  ): Promise<GuidedQuestionItemRecord[]> {
+    if (items.length === 0) {
+      return [];
+    }
+
+    const url = this.tableUrl("guided_question_items", { select: "*" });
+    const response = await this.request(
+      "POST",
+      url,
+      items.map((item) => ({
+        question_item_id: maybeUuid(item.question_item_id),
+        round_id: maybeUuid(item.round_id),
+        thread_id: item.thread_id,
+        organization_id: item.organization_id,
+        cycle_id: item.cycle_id,
+        root_problem_version_id: item.root_problem_version_id,
+        participant_id: maybeUuid(item.participant_id),
+        ordinal: item.ordinal,
+        prompt: item.prompt,
+        options_json: item.options,
+        recommended_option: item.recommended_option,
+        selected_option: item.selected_option,
+        short_reason: item.short_reason,
+        answered_at: item.answered_at,
+        created_at: item.created_at,
+        updated_at: item.updated_at,
+      })),
+      { Prefer: "return=representation" },
+    );
+    const payload = await this.expectOk(response);
+    const rows = Array.isArray(payload) ? payload : [];
+    return rows.map((row) => this.mapGuidedQuestionItem(asObject(row)));
+  }
+
+  async answerGuidedQuestionItem(
+    questionItemId: string,
+    update: {
+      selected_option: GuidedQuestionItemRecord["selected_option"];
+      short_reason?: string;
+      answered_at: string;
+      updated_at?: string;
+    },
+  ): Promise<GuidedQuestionItemRecord | null> {
+    const url = this.tableUrl("guided_question_items", {
+      select: "*",
+      question_item_id: `eq.${questionItemId}`,
+    });
+    const response = await this.request(
+      "PATCH",
+      url,
+      {
+        selected_option: update.selected_option,
+        short_reason: update.short_reason,
+        answered_at: update.answered_at,
+        updated_at: update.updated_at,
+      },
+      { Prefer: "return=representation" },
+    );
+    const payload = await this.expectOk(response);
+    const rows = Array.isArray(payload) ? payload : [];
+    if (rows.length === 0) {
+      return null;
+    }
+    return this.mapGuidedQuestionItem(asObject(rows[0]));
+  }
+
+  async getLabBriefDraftForThread(threadId: string, cycleId: string): Promise<LabBriefDraftRecord | null> {
+    const url = this.tableUrl("lab_brief_drafts", {
+      select: "*",
+      thread_id: `eq.${threadId}`,
+      cycle_id: `eq.${cycleId}`,
+      limit: "1",
+    });
+    const response = await this.request("GET", url);
+    const payload = await this.expectOk(response);
+    const rows = Array.isArray(payload) ? payload : [];
+    if (rows.length === 0) {
+      return null;
+    }
+    return this.mapLabBriefDraft(asObject(rows[0]));
+  }
+
+  async upsertLabBriefDraft(
+    record: Omit<LabBriefDraftRecord, "draft_id" | "created_at" | "updated_at"> & {
+      draft_id?: string;
+      created_at?: string;
+      updated_at?: string;
+    },
+  ): Promise<LabBriefDraftRecord> {
+    const url = this.tableUrl("lab_brief_drafts", {
+      select: "*",
+      on_conflict: "thread_id,cycle_id",
+    });
+    const response = await this.request(
+      "POST",
+      url,
+      {
+        draft_id: maybeUuid(record.draft_id),
+        thread_id: record.thread_id,
+        organization_id: record.organization_id,
+        cycle_id: record.cycle_id,
+        root_problem_version_id: record.root_problem_version_id,
+        participant_id: maybeUuid(record.participant_id),
+        status: record.status,
+        content_json: record.content,
+        generation_metadata_json: record.generation_metadata,
+        created_at: record.created_at,
+        updated_at: record.updated_at,
+      },
+      { Prefer: "resolution=merge-duplicates,return=representation" },
+    );
+    const payload = await this.expectOk(response);
+    const rows = Array.isArray(payload) ? payload : [];
+    if (rows.length === 0) {
+      throw new Error("upsertLabBriefDraft returned no rows");
+    }
+    return this.mapLabBriefDraft(asObject(rows[0]));
+  }
+
+  async listLabBriefDraftsForCycle(cycleId: string): Promise<LabBriefDraftRecord[]> {
+    const url = this.tableUrl("lab_brief_drafts", {
+      select: "*",
+      cycle_id: `eq.${cycleId}`,
+      order: "created_at.asc",
+    });
+    const response = await this.request("GET", url);
+    const payload = await this.expectOk(response);
+    const rows = Array.isArray(payload) ? payload : [];
+    return rows.map((row) => this.mapLabBriefDraft(asObject(row)));
+  }
+
+  async insertModelRun(
+    record: Omit<ModelRunRecord, "run_id" | "created_at"> & { run_id?: string; created_at?: string },
+  ): Promise<ModelRunRecord> {
+    const url = this.tableUrl("model_runs", { select: "*" });
+    const response = await this.request(
+      "POST",
+      url,
+      {
+        run_id: maybeUuid(record.run_id),
+        organization_id: record.organization_id,
+        cycle_id: record.cycle_id,
+        root_problem_version_id: record.root_problem_version_id,
+        thread_id: record.thread_id,
+        participant_id: maybeUuid(record.participant_id),
+        action_type: record.action_type,
+        provider: record.provider,
+        model_name: record.model_name,
+        status: record.status,
+        prompt_contract_version: record.prompt_contract_version,
+        latency_ms: record.latency_ms,
+        estimated_cost_usd: record.estimated_cost_usd,
+        fallback_reason: record.fallback_reason,
+        created_at: record.created_at,
+      },
+      { Prefer: "return=representation" },
+    );
+    const payload = await this.expectOk(response);
+    const rows = Array.isArray(payload) ? payload : [];
+    if (rows.length === 0) {
+      throw new Error("insertModelRun returned no rows");
+    }
+    return this.mapModelRun(asObject(rows[0]));
+  }
+
+  async listModelRunsForCycle(organizationId: string, cycleId: string, limit = 200): Promise<ModelRunRecord[]> {
+    const url = this.tableUrl("model_runs", {
+      select: "*",
+      organization_id: `eq.${organizationId}`,
+      cycle_id: `eq.${cycleId}`,
+      order: "created_at.desc",
+      limit: String(limit),
+    });
+    const response = await this.request("GET", url);
+    const payload = await this.expectOk(response);
+    const rows = Array.isArray(payload) ? payload : [];
+    return rows.map((row) => this.mapModelRun(asObject(row)));
+  }
+
+  async listCycleMemberships(organizationId: string, cycleId: string): Promise<CycleMembershipRecord[]> {
+    const url = this.tableUrl("cycle_memberships", {
+      select: "*",
+      organization_id: `eq.${organizationId}`,
+      cycle_id: `eq.${cycleId}`,
+      order: "updated_at.desc",
+    });
+    const response = await this.request("GET", url);
+    const payload = await this.expectOk(response);
+    const rows = Array.isArray(payload) ? payload : [];
+    return rows.map((row) => this.mapMembership(asObject(row)));
+  }
+
+  async listIngestForCycle(organizationId: string, cycleId: string, limit = 200): Promise<IngestRecord[]> {
+    const url = this.tableUrl("event_ingest_log", {
+      select: "*",
+      organization_id: `eq.${organizationId}`,
+      cycle_id: `eq.${cycleId}`,
+      order: "created_at.desc",
+      limit: String(limit),
+    });
+    const response = await this.request("GET", url);
+    const payload = await this.expectOk(response);
+    const rows = Array.isArray(payload) ? payload : [];
+    return rows.map((row) => this.mapIngest(asObject(row)));
+  }
+
+  async listProtectedActionAuditsForCycle(
+    organizationId: string,
+    cycleId: string,
+    limit = 200,
+  ): Promise<ProtectedActionAuditRecord[]> {
+    const url = this.tableUrl("protected_action_audit", {
+      select: "*",
+      organization_id: `eq.${organizationId}`,
+      cycle_id: `eq.${cycleId}`,
+      order: "created_at.desc",
+      limit: String(limit),
+    });
+    const response = await this.request("GET", url);
+    const payload = await this.expectOk(response);
+    const rows = Array.isArray(payload) ? payload : [];
+    return rows.map((row) => this.mapAudit(asObject(row)));
   }
 
   async publishLabRecordTxn(input: PublishTxnInput): Promise<PublishTxnResult> {
