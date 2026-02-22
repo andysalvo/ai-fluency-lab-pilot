@@ -1,35 +1,28 @@
-# ai-fluency-lab-pilot
+# Applied AI Labs
 
-Cloud-shaped pilot runtime for Applied AI Labs / AI Fluency Lab.
+Applied AI Labs is building a simple, governed idea warehouse for student AI fluency research.
 
-## Local run
-```bash
-npm install
-npm run dev
-```
+Cycle 1 product:
+- students answer one fixed focus question in Notion
+- each submission is stored in Supabase
+- each submission gets an embedding for analysis
 
-Health check:
-```bash
-curl -s http://localhost:8787/health | jq
-```
+This repository is organized to keep the active system easy to understand:
+- `docs/warehouse/` -> canonical plan and implementation contract
+- `governance/` -> immutable safety and policy corpus
+- `runtime/` -> Notion webhook + runtime services
+- `supabase/` -> schema and migrations
 
-## Runtime endpoints
-1. `GET /` (minimal branded home)
-2. `GET /health`
-3. `POST /api/notion/webhook`
-4. `POST /api/auth/callback/google`
-5. `POST /api/session/active-cycle/select`
-6. `POST /api/visible-surface`
-7. `POST /api/actions/readiness/evaluate`
-8. `POST /api/actions/publish`
-9. `POST /api/admin/intake/backfill`
-10. `POST /api/admin/cycles/create`
-11. `POST /api/admin/cycles/bootstrap`
-12. `POST /api/admin/cycles/{cycle_id}/activate`
-13. `POST /api/admin/cycles/{cycle_id}/freeze`
-14. `POST /api/admin/cycles/{cycle_id}/snapshot`
-15. `POST /api/admin/cycles/{cycle_id}/export`
-16. `POST /api/admin/cycles/{cycle_id}/reset-next`
+Start here:
+- `/docs/README.md`
+- `/docs/warehouse/00_MANIFESTO.md`
 
-## Isolation rule
-All protected/read-write operations require explicit `cycle_id`. The runtime does not infer a default cycle.
+## Focus Question (Cycle 1)
+How do we build sustained AI fluency inside a student population when the technology and norms are constantly shifting?
+
+## Non-Negotiable Constraints
+- No hidden cross-thread reads
+- No auto-publish
+- Readiness requires 2-of-3 checks plus explicit confirmation
+- Protected actions are server-enforced
+- Notion is UX; Supabase is enforcement and system-of-record
