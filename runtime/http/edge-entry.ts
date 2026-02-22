@@ -836,7 +836,7 @@ export async function handleRequest(request: Request, deps: EdgeHandlerDeps = {}
         <h2 class="section">Add a Source</h2>
         <p class="copy">Drop one URL and a short relevance note. The system proposes a starter brief with provenance.</p>
         <div class="btnrow">
-          <a class="btn" href="/app">Open Lab Cards</a>
+          <a class="btn" href="/app">Open Lab Workspace</a>
           <a class="btn secondary" href="${notionHref}">Open Notion Workspace</a>
         </div>
       </section>
@@ -884,7 +884,7 @@ export async function handleRequest(request: Request, deps: EdgeHandlerDeps = {}
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>Lab Cards | Applied AI Labs</title>
+    <title>Lab Workspace | Applied AI Labs</title>
     <style>
       :root { --ink: #1f2d56; --muted: #55617d; --bg: #f7f9fc; --card: #ffffff; --line: #dbe1ef; }
       * { box-sizing: border-box; }
@@ -906,7 +906,7 @@ export async function handleRequest(request: Request, deps: EdgeHandlerDeps = {}
     <main>
       <img class="brand" src="/branding/applied-ai-labs-logo.svg" alt="Applied AI Labs logo" />
       <section class="card">
-        <h1>Lab Cards</h1>
+        <h1>Lab Workspace</h1>
         <p class="focus">${escapeHtml(config.focus_snapshot)}</p>
         <p>How can students stay fluent with AI as tools and norms keep changing?</p>
         ${
@@ -969,7 +969,14 @@ export async function handleRequest(request: Request, deps: EdgeHandlerDeps = {}
         403,
         `<!doctype html><html><body style="font-family:Helvetica,Arial,sans-serif;padding:24px;"><p>Blocked: ${escapeHtml(
           participantContext.reason_code,
-        )}</p><a href="/app?cycle_id=${encodeURIComponent(cycleId)}&organization_id=${encodeURIComponent(organizationId)}">Back to Lab Cards</a></body></html>`,
+        )}</p><a href="/app?cycle_id=${encodeURIComponent(cycleId)}&organization_id=${encodeURIComponent(organizationId)}">Back to Lab Workspace</a></body></html>`,
+      );
+    }
+    const participant = participantContext.participant;
+    if (!participant) {
+      return html(
+        403,
+        `<!doctype html><html><body style="font-family:Helvetica,Arial,sans-serif;padding:24px;"><p>Blocked: NO_MEMBERSHIP_FOR_CYCLE</p><a href="/app?cycle_id=${encodeURIComponent(cycleId)}&organization_id=${encodeURIComponent(organizationId)}">Back to Lab Workspace</a></body></html>`,
       );
     }
 
@@ -978,7 +985,9 @@ export async function handleRequest(request: Request, deps: EdgeHandlerDeps = {}
       cycle_id: cycleId,
       thread_id: threadId,
     });
-    const detailView = url.searchParams.get("view") === "details";
+    const detailViewRequested = url.searchParams.get("view") === "details";
+    const canUseDetailView = participant.global_role === "operator" || participant.global_role === "admin";
+    const detailView = detailViewRequested && canUseDetailView;
     const cardStack = mapWorkspaceToCardStack(workspace, config.focus_snapshot);
     const simpleView = mapWorkspaceToStudentSimpleView(workspace, config.focus_snapshot);
     const simpleStackHtml = renderCardsHtml({
@@ -1088,14 +1097,14 @@ export async function handleRequest(request: Request, deps: EdgeHandlerDeps = {}
                           )}">Add Another Source</a>`
                         : `<button id="start-round" class="primary">${escapeHtml(simpleView.primary_action_label ?? "Start Quick Questions")}</button>`
           }
-          <a class="btn" href="/app?cycle_id=${encodeURIComponent(cycleId)}&organization_id=${encodeURIComponent(organizationId)}">Back to Lab Cards</a>
+          <a class="btn" href="/app?cycle_id=${encodeURIComponent(cycleId)}&organization_id=${encodeURIComponent(organizationId)}">Back to Lab Workspace</a>
         </div>
         ${
           stage === "ready_to_publish"
             ? `<div class="row"><label><input type="checkbox" id="confirm" /> I confirm this is ready for Lab Record.</label></div>`
             : ""
         }
-        <div class="row"><a class="link" href="${detailsHref}">Show details</a></div>
+        ${canUseDetailView ? `<div class="row"><a class="link" href="${detailsHref}">Show details</a></div>` : ""}
         <div id="status-msg" class="status-msg"></div>
       </section>
     </main>
@@ -1260,7 +1269,7 @@ export async function handleRequest(request: Request, deps: EdgeHandlerDeps = {}
           <button id="start-round" class="primary">Start/Continue Guided Round</button>
           <button id="propose-brief">Generate Lab Brief Proposal</button>
           <a class="btn" href="/submit?cycle_id=${encodeURIComponent(cycleId)}&organization_id=${encodeURIComponent(organizationId)}">Add Another Source</a>
-          <a class="btn" href="/app?cycle_id=${encodeURIComponent(cycleId)}&organization_id=${encodeURIComponent(organizationId)}">Back to Lab Cards</a>
+          <a class="btn" href="/app?cycle_id=${encodeURIComponent(cycleId)}&organization_id=${encodeURIComponent(organizationId)}">Back to Lab Workspace</a>
         </div>
         ${
           unanswered.length > 0

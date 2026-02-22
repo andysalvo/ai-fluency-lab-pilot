@@ -9,6 +9,7 @@ import {
   LAB_BRIEF_PROPOSAL_MODEL_NAME,
   proposeLabBriefFromThread,
 } from "./lab-brief-proposal.js";
+import { cleanSourceExcerpt, cleanStudentNote, stripLeadingSemanticPrefix, toOptionCap, toSentenceCap } from "./text-normalize.js";
 import type {
   GuidedQuestionItemRecord,
   GuidedQuestionOption,
@@ -28,7 +29,6 @@ type StarterDraftShape = Pick<
 export const STARTER_DRAFT_PROMPT_CONTRACT_VERSION = "initial_thread_draft_v2";
 export const STARTER_DRAFT_MODEL_NAME = "rule-based-deterministic";
 const MAX_OPTION_WORDS = 14;
-const MAX_SENTENCE_WORDS = 22;
 
 interface ProviderResult<T> {
   payload: T;
@@ -71,26 +71,10 @@ function compact(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
 
-function capWords(value: string, maxWords: number): string {
-  const normalized = compact(value);
-  if (!normalized) {
-    return "";
-  }
-  const words = normalized.split(" ");
-  if (words.length <= maxWords) {
-    return normalized;
-  }
-  return words.slice(0, maxWords).join(" ");
-}
-
 function toSentence(value: string, fallbackText: string): string {
-  const candidate = compact(value || fallbackText);
-  const first = candidate.split(/(?<=[.!?])\s+/)[0] ?? candidate;
-  const capped = capWords(first, MAX_SENTENCE_WORDS);
-  if (!capped) {
-    return fallbackText;
-  }
-  return /[.!?]$/.test(capped) ? capped : `${capped}.`;
+  const normalized = stripLeadingSemanticPrefix(cleanStudentNote(value || "").cleaned);
+  const fallback = stripLeadingSemanticPrefix(compact(fallbackText));
+  return toSentenceCap(normalized || fallback, 22) || fallback;
 }
 
 function asGuidedOption(value: unknown): GuidedQuestionOption | null {
@@ -103,7 +87,7 @@ function asGuidedOption(value: unknown): GuidedQuestionOption | null {
   if (!code || !text || !["A", "B", "C", "D"].includes(code)) {
     return null;
   }
-  return { code: code as GuidedQuestionOption["code"], text: capWords(text, MAX_OPTION_WORDS) };
+  return { code: code as GuidedQuestionOption["code"], text: toOptionCap(text, MAX_OPTION_WORDS) };
 }
 
 function parseGuidedQuestionsPayload(raw: unknown): GuidedRoundShape | null {
@@ -155,18 +139,18 @@ function parseLabBriefPayload(raw: unknown): LabBriefGenerationContent | null {
     return null;
   }
   return {
-    what_it_is: toSentence(what_it_is, "Core idea: build stronger AI fluency through repeatable reasoning habits."),
+    what_it_is: toSentence(what_it_is, "Build stronger AI fluency through repeatable reasoning habits."),
     why_it_matters: toSentence(
       why_it_matters,
-      "Student pattern: many learners move fast with tools but skip reflection and evidence checks.",
+      "Many learners move fast with tools but skip reflection and evidence checks.",
     ),
     evidence: toSentence(
       evidence,
-      "Key tension and implication: speed without structure weakens fluency, so courses need clear routines and feedback loops.",
+      "Speed without structure weakens fluency, so courses need clear routines and feedback loops.",
     ),
     next_step: toSentence(
       next_step,
-      "Cohort question: which classroom routine best improves AI judgment over a full semester?",
+      "Which classroom routine best improves AI judgment over a full semester?",
     ),
     confidence: asString(row.confidence) ? toSentence(asString(row.confidence) ?? "", "Medium confidence.") : undefined,
     model_name: asString(row.model_name) ?? "kimi",
@@ -190,23 +174,23 @@ function parseStarterDraftPayload(raw: unknown): StarterDraftShape | null {
   }
   return {
     source_takeaway: toSentence(
-      source_takeaway,
+      stripLeadingSemanticPrefix(source_takeaway),
       "The source shows a practical AI learning issue that matters for student fluency.",
     ),
     student_note_takeaway: toSentence(
-      student_note_takeaway,
+      stripLeadingSemanticPrefix(student_note_takeaway),
       "The student note highlights what feels useful and what still needs clarity.",
     ),
     combined_insight: toSentence(
-      combined_insight,
+      stripLeadingSemanticPrefix(combined_insight),
       "Fluency improves when students pair tool use with explicit reasoning habits.",
     ),
     tension_or_assumption: toSentence(
-      tension_or_assumption,
+      stripLeadingSemanticPrefix(tension_or_assumption),
       "Main tension: AI speed can beat deep learning unless structure is enforced.",
     ),
     next_best_move: toSentence(
-      next_best_move,
+      stripLeadingSemanticPrefix(next_best_move),
       "Next move: frame one cohort-level discussion question that can sharpen the idea.",
     ),
   };
@@ -363,6 +347,8 @@ export async function generateStarterDraftWithProvider(
   },
   config: RuntimeConfig,
 ): Promise<ProviderResult<StarterDraftShape>> {
+  const cleanedNote = cleanStudentNote(input.relevance_note).cleaned;
+  const cleanedExcerpt = cleanSourceExcerpt(input.source_excerpt, 3200);
   if (!kimiEnabled(config)) {
     return {
       payload: input.deterministic,
@@ -375,12 +361,14 @@ export async function generateStarterDraftWithProvider(
     "source_takeaway, student_note_takeaway, combined_insight, tension_or_assumption, next_best_move.",
     "Use plain language for 17-21 college students.",
     "Each sentence must be 22 words or fewer.",
-    "Tone: focus-group consultant summary, practical and non-jargon.",
+    "Tone: notebook-style briefing, practical, calm, and direct.",
+    "Do not include model self-reference (for example: 'Kimi said', 'Based on the article').",
+    "Do not prepend semantic labels in values; return content only.",
     "Use only this thread context.",
     `Focus: ${input.focus_snapshot}`,
     `Source URL: ${input.source_url}`,
-    `Student note: ${input.relevance_note}`,
-    `Bounded source text: ${input.source_excerpt}`,
+    `Student note: ${cleanedNote}`,
+    `Bounded source text: ${cleanedExcerpt}`,
   ].join("\n");
 
   const kimiResult = await tryWithKimi(config, STARTER_DRAFT_PROMPT_CONTRACT_VERSION, prompt, parseStarterDraftPayload);
@@ -410,7 +398,13 @@ export async function generateGuidedRoundWithProvider(
   },
   config: RuntimeConfig,
 ): Promise<ProviderResult<GuidedRoundShape>> {
-  const deterministic = generateGuidedRoundQuestions(input);
+  const deterministic = generateGuidedRoundQuestions({
+    ...input,
+    source_takeaway: stripLeadingSemanticPrefix(input.source_takeaway ?? ""),
+    combined_insight: stripLeadingSemanticPrefix(input.combined_insight ?? ""),
+    tension_or_assumption: stripLeadingSemanticPrefix(input.tension_or_assumption ?? ""),
+    next_best_move: stripLeadingSemanticPrefix(input.next_best_move ?? ""),
+  });
   if (!kimiEnabled(config)) {
     return {
       payload: deterministic,
@@ -421,17 +415,18 @@ export async function generateGuidedRoundWithProvider(
   const prompt = [
     "Return exactly 5 multiple-choice questions as strict JSON for this thread.",
     "Audience: 17-21 college students. Tone: clear, practical, non-jargon.",
-    "Each prompt should read like one consultant-style focus-group question.",
+    "Each prompt should read like a short focus-group question.",
     "Each option must be 14 words or fewer.",
+    "Never include model-attribution or boilerplate preambles.",
     "Return JSON shape:",
     '{"questions":[{"ordinal":1,"prompt":"...","options":[{"code":"A","text":"..."},{"code":"B","text":"..."},{"code":"C","text":"..."},{"code":"D","text":"..."}],"recommended_option":"A"}]}',
     "Map the five questions to these sentence slots: core idea, student pattern, key tension, strategic implication, cohort question.",
     `Focus: ${input.focus_snapshot}`,
     `Source URL: ${input.source_url}`,
-    `Source takeaway: ${input.source_takeaway ?? ""}`,
-    `Combined insight: ${input.combined_insight ?? ""}`,
-    `Tension or assumption: ${input.tension_or_assumption ?? ""}`,
-    `Next best move: ${input.next_best_move ?? ""}`,
+    `Source takeaway: ${stripLeadingSemanticPrefix(input.source_takeaway ?? "")}`,
+    `Combined insight: ${stripLeadingSemanticPrefix(input.combined_insight ?? "")}`,
+    `Tension or assumption: ${stripLeadingSemanticPrefix(input.tension_or_assumption ?? "")}`,
+    `Next best move: ${stripLeadingSemanticPrefix(input.next_best_move ?? "")}`,
   ].join("\n");
 
   const kimiResult = await tryWithKimi(config, GUIDED_ROUND_PROMPT_CONTRACT_VERSION, prompt, parseGuidedQuestionsPayload);
@@ -460,6 +455,7 @@ export async function proposeLabBriefWithProvider(
   },
   config: RuntimeConfig,
 ): Promise<ProviderResult<LabBriefGenerationContent>> {
+  const cleanedNote = cleanStudentNote(input.relevance_note).cleaned;
   const deterministic = proposeLabBriefFromThread(input);
   if (!kimiEnabled(config)) {
     return {
@@ -476,12 +472,13 @@ export async function proposeLabBriefWithProvider(
     "Each sentence must be 22 words or fewer.",
     "Use only same-thread source and note context.",
     "Keep language readable for 17-21 college students.",
+    "Do not include model-attribution phrases or duplicate semantic labels.",
     `Focus: ${input.focus_snapshot}`,
     `Source URL: ${input.source_url}`,
-    `Relevance note: ${input.relevance_note}`,
-    `Starter combined insight: ${asString(starterPayload.combined_insight) ?? ""}`,
-    `Starter tension/assumption: ${asString(starterPayload.tension_or_assumption) ?? ""}`,
-    `Starter next best move: ${asString(starterPayload.next_best_move) ?? ""}`,
+    `Relevance note: ${cleanedNote}`,
+    `Starter combined insight: ${stripLeadingSemanticPrefix(asString(starterPayload.combined_insight) ?? "")}`,
+    `Starter tension/assumption: ${stripLeadingSemanticPrefix(asString(starterPayload.tension_or_assumption) ?? "")}`,
+    `Starter next best move: ${stripLeadingSemanticPrefix(asString(starterPayload.next_best_move) ?? "")}`,
     `Latest round summary: ${input.round_summary ?? ""}`,
   ].join("\n");
 

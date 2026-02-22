@@ -1049,6 +1049,7 @@ test("demo path smoke: source to publish renders thread cards with 200", async (
   );
   assert.equal(detailThreadPage.status, 200);
   const detailHtml = await detailThreadPage.text();
-  assert.equal(detailHtml.includes("Initial Thread Draft"), true);
-  assert.equal(detailHtml.includes("Guided Rounds"), true);
+  assert.equal(detailHtml.includes("One Next Step"), true);
+  assert.equal(detailHtml.includes("Thread Actions"), false);
+  assert.equal(detailHtml.includes("Readiness Check"), false);
 });

@@ -6,40 +6,23 @@ import type {
   StarterBriefRecord,
   ThreadWorkspaceResponse,
 } from "../core/types.js";
+import { cleanStudentNote, stripLeadingSemanticPrefix, toSentenceCap } from "../core/text-normalize.js";
 
 const STUDENT_FOCUS_LINE = "How can students stay fluent with AI as tools and norms keep changing?";
-const MAX_SENTENCE_WORDS = 22;
-
 function asString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 }
 
-function capWords(value: string, maxWords: number): string {
-  const normalized = value.replace(/\s+/g, " ").trim();
-  if (!normalized) {
-    return "";
-  }
-  const words = normalized.split(" ");
-  if (words.length <= maxWords) {
-    return normalized;
-  }
-  return words.slice(0, maxWords).join(" ");
-}
-
 function toSentence(value: string, fallback: string): string {
-  const candidate = (value || fallback).replace(/\s+/g, " ").trim();
-  const first = candidate.split(/(?<=[.!?])\s+/)[0] ?? candidate;
-  const capped = capWords(first, MAX_SENTENCE_WORDS);
-  if (!capped) {
-    return fallback;
-  }
-  return /[.!?]$/.test(capped) ? capped : `${capped}.`;
+  const normalized = stripLeadingSemanticPrefix((value || "").replace(/\s+/g, " ").trim());
+  const fallbackNormalized = stripLeadingSemanticPrefix(fallback);
+  return toSentenceCap(normalized || fallbackNormalized, 22) || fallbackNormalized;
 }
 
 function addIfPresent(lines: string[], label: string, value: unknown): void {
   const text = asString(value);
   if (text) {
-    lines.push(`${label}: ${text}`);
+    lines.push(`${label}: ${stripLeadingSemanticPrefix(text) || text}`);
   }
 }
 
@@ -139,16 +122,22 @@ function buildSourceCard(workspace: ThreadWorkspaceResponse): CardViewModel {
     };
   }
 
+  const cleanedNote = cleanStudentNote(workspace.source.relevance_note).cleaned;
+  const details = [
+    { key: "canonical_url", value: workspace.source.canonical_url },
+    { key: "possible_duplicate", value: workspace.source.possible_duplicate ? "true" : "false" },
+    { key: "source_submission_id", value: workspace.source.source_submission_id },
+  ];
+  if (cleanedNote !== workspace.source.relevance_note) {
+    details.push({ key: "raw_note", value: workspace.source.relevance_note });
+  }
+
   return {
     id: "source",
     title: "Source",
     status_chip: "ready",
-    body_blocks: [workspace.source.raw_url, workspace.source.relevance_note],
-    details: [
-      { key: "canonical_url", value: workspace.source.canonical_url },
-      { key: "possible_duplicate", value: workspace.source.possible_duplicate ? "true" : "false" },
-      { key: "source_submission_id", value: workspace.source.source_submission_id },
-    ],
+    body_blocks: [workspace.source.raw_url, cleanedNote],
+    details,
   };
 }
 
@@ -209,19 +198,21 @@ function asQuestion(value: string, fallback: string): string {
 function buildAgenticGuidanceCard(workspace: ThreadWorkspaceResponse): CardViewModel {
   const starterPayload = toStarter(workspace.starter_brief);
   const combinedInsight =
-    asString(starterPayload.combined_insight) ?? "Build a repeatable routine where students connect AI use to evidence and reasoning.";
+    stripLeadingSemanticPrefix(asString(starterPayload.combined_insight) ?? "") ||
+    "Build a repeatable routine where students connect AI use to evidence and reasoning.";
   const studentPattern =
-    workspace.source?.relevance_note ?? "Students often move fast with AI tools and skip the deeper reasoning step.";
+    cleanStudentNote(workspace.source?.relevance_note ?? "").cleaned ||
+    "Students often move fast with AI tools and skip the deeper reasoning step.";
   const tension =
-    asString(starterPayload.tension_or_assumption) ??
+    stripLeadingSemanticPrefix(asString(starterPayload.tension_or_assumption) ?? "") ||
     "Speed and convenience can overpower learning depth unless structure and feedback are built into the process.";
   const nextBestMove =
-    asString(starterPayload.next_best_move) ??
+    stripLeadingSemanticPrefix(asString(starterPayload.next_best_move) ?? "") ||
     "Which class routine helps students use AI for stronger judgment over time";
   const readinessReason = workspace.readiness?.reason_code;
   const strategicImplication = workspace.readiness?.ready_to_publish
-    ? "Strategic implication: this thread is strong enough to move into the Lab Record after explicit confirmation."
-    : "Strategic implication: this thread needs one more pass before it is strong enough for the Lab Record.";
+    ? "This thread is strong enough to move into the Lab Record after explicit confirmation."
+    : "This thread needs one more pass before it is strong enough for the Lab Record.";
 
   return {
     id: "agentic-guidance",
@@ -231,7 +222,7 @@ function buildAgenticGuidanceCard(workspace: ThreadWorkspaceResponse): CardViewM
       `Core idea: ${toSentence(combinedInsight, "Build a repeatable AI fluency routine grounded in evidence.")}`,
       `Student pattern: ${toSentence(studentPattern, "Students move quickly with AI and need clearer reasoning structure.")}`,
       `Key tension: ${toSentence(tension, "AI speed can conflict with learning depth if classes skip reflection.")}`,
-      toSentence(strategicImplication, strategicImplication),
+      `Strategic implication: ${toSentence(strategicImplication, strategicImplication)}`,
       `Cohort question: ${asQuestion(nextBestMove, "What routine should our cohort test to improve AI fluency next week")}`,
     ],
     details: [{ key: "quality_check", value: readinessMissingText(readinessReason) }],

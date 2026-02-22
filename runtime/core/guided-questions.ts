@@ -45,64 +45,64 @@ export function generateGuidedRoundQuestions(input: {
   tension_or_assumption?: string;
   next_best_move?: string;
 }): Array<Pick<GuidedQuestionItemRecord, "ordinal" | "prompt" | "options" | "recommended_option">> {
-  const sourceTakeaway = capWords(short(input.source_takeaway, "Use one clear source point."), 12);
-  const combinedInsight = capWords(short(input.combined_insight, "State one clear insight."), 12);
-  const tension = capWords(short(input.tension_or_assumption, "Name one key tension."), 12);
-  const nextMove = capWords(short(input.next_best_move, "Ask one cohort-level question."), 12);
+  const sourceTakeaway = capWords(short(input.source_takeaway, "Use one clear source point."), 10);
+  const combinedInsight = capWords(short(input.combined_insight, "State one clear insight."), 10);
+  const tension = capWords(short(input.tension_or_assumption, "Name one key tension."), 10);
+  const nextMove = capWords(short(input.next_best_move, "Ask one cohort-level question."), 10);
 
   return [
     {
       ordinal: 1,
-      prompt: `Sentence 1 of 5 (Core idea): which claim fits this focus best?`,
+      prompt: "What is your clearest core idea from this source?",
       options: makeOptions(
-        `Clear core claim tied to source: ${sourceTakeaway}`,
-        "Clear claim, but still broad.",
-        "Interesting direction, but too vague.",
-        "Not ready to state a claim.",
+        `Claim: ${sourceTakeaway}`,
+        "Clear idea, still broad.",
+        "Interesting, but too vague.",
+        "Not ready to state it.",
       ),
       recommended_option: "A",
     },
     {
       ordinal: 2,
-      prompt: "Sentence 2 of 5 (Student pattern): what pattern do students show now?",
+      prompt: "What student pattern matters most right now?",
       options: makeOptions(
-        "Students rush for answers without reflection.",
-        "Students save time, but learning gains are unclear.",
-        "Students engage, but outcomes vary too much.",
+        "Students rush to answers, skip reflection.",
+        "Students save time, learning gains unclear.",
+        "Students engage, outcomes vary by class.",
         "Pattern is still unclear.",
       ),
       recommended_option: "A",
     },
     {
       ordinal: 3,
-      prompt: "Sentence 3 of 5 (Key tension): what tension matters most here?",
+      prompt: "What key tension do we need to solve?",
       options: makeOptions(
-        `Learning depth vs shortcut use: ${tension}`,
-        "Policy goals vs classroom reality.",
-        "Innovation pace vs faculty comfort.",
+        `Tension: ${tension}`,
+        "Policy goals versus classroom reality.",
+        "Innovation speed versus faculty comfort.",
         "Tension still unclear.",
       ),
       recommended_option: "A",
     },
     {
       ordinal: 4,
-      prompt: "Sentence 4 of 5 (Strategic implication): what should leaders do next?",
+      prompt: "What should the lab team do next?",
       options: makeOptions(
-        `Set a repeatable class routine around: ${combinedInsight}`,
+        `Next move: ${combinedInsight}`,
         "Run optional workshops first.",
         "Wait for better tools.",
-        "No clear strategic move yet.",
+        "No clear move yet.",
       ),
       recommended_option: "A",
     },
     {
       ordinal: 5,
-      prompt: "Sentence 5 of 5 (Cohort question): what should the group debate?",
+      prompt: "What should the cohort debate next?",
       options: makeOptions(
-        `Best cohort question: ${nextMove}`,
-        "Should we prioritize policy over practice?",
-        "Should we delay until next term?",
-        "Question still unclear.",
+        `Debate: ${nextMove}`,
+        "Prioritize policy over practice?",
+        "Delay this to next term?",
+        "Question is still unclear.",
       ),
       recommended_option: "A",
     },

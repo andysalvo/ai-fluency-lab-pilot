@@ -1,5 +1,6 @@
 import type { RuntimeConfig } from "../adapters/env.js";
 import { STARTER_DRAFT_PROMPT_CONTRACT_VERSION, generateStarterDraftWithProvider } from "./planner-provider.js";
+import { cleanSourceExcerpt, cleanStudentNote, stripLeadingSemanticPrefix, toSentenceCap } from "./text-normalize.js";
 import type { InitialThreadDraftContent } from "./types.js";
 
 export const LOCKED_REASONING_MODEL = "gpt-4.1";
@@ -33,27 +34,11 @@ function truncate(value: string, maxLength: number): string {
   return `${normalized.slice(0, Math.max(1, maxLength - 1))}…`;
 }
 
-function capWords(value: string, maxWords: number): string {
-  const normalized = value.replace(/\s+/g, " ").trim();
-  if (!normalized) {
-    return "";
-  }
-  const words = normalized.split(" ");
-  if (words.length <= maxWords) {
-    return normalized;
-  }
-  return words.slice(0, maxWords).join(" ");
-}
-
 function toSentence(value: string, fallbackText: string, maxLength: number): string {
-  const collapsed = value.replace(/\s+/g, " ").trim();
-  if (!collapsed) {
-    return fallbackText;
-  }
-  const first = collapsed.split(/(?<=[.!?])\s+/)[0] ?? collapsed;
-  const words = capWords(first, MAX_SENTENCE_WORDS);
-  const withPunctuation = /[.!?]$/.test(words) ? words : `${words}.`;
-  return truncate(withPunctuation, maxLength);
+  const normalized = stripLeadingSemanticPrefix(value);
+  const fallbackNormalized = stripLeadingSemanticPrefix(fallbackText);
+  const sentence = toSentenceCap(normalized || fallbackNormalized, MAX_SENTENCE_WORDS) || fallbackNormalized;
+  return truncate(sentence, maxLength);
 }
 
 function stripHtml(input: string): string {
@@ -83,7 +68,7 @@ async function fetchBoundedSourceText(url: string, timeoutMs = 6000, maxChars = 
     }
 
     const text = await response.text();
-    const cleaned = stripHtml(text);
+    const cleaned = cleanSourceExcerpt(stripHtml(text), maxChars);
     return cleaned.length > 0 ? truncate(cleaned, maxChars) : null;
   } catch {
     return null;
@@ -105,7 +90,7 @@ function deterministicNormalizeDraft(input: {
   prompt_contract_version?: string;
   golden_example_id?: string;
 }): InitialThreadDraftContent {
-  const note = input.relevance_note.trim();
+  const note = cleanStudentNote(input.relevance_note).cleaned;
   const focus = truncate(input.focus_snapshot.trim(), 220);
   const fallbackSourceTakeaway =
     note.length > 0 ? `Source signal: ${truncate(note, 220)}` : "Source signal: this article links to the focus but needs a clearer note.";
@@ -261,10 +246,12 @@ export interface StarterBriefOutput {
 }
 
 export async function generateStarterBrief(input: StarterBriefInput): Promise<StarterBriefOutput> {
+  const cleanedNote = cleanStudentNote(input.relevance_note).cleaned;
   const excerpt = input.source_excerpt?.trim();
-  const fetched = excerpt && excerpt.length > 0 ? truncate(excerpt, 6000) : await fetchBoundedSourceText(input.url);
+  const fetchedRaw = excerpt && excerpt.length > 0 ? truncate(excerpt, 6000) : await fetchBoundedSourceText(input.url);
+  const fetched = fetchedRaw ? cleanSourceExcerpt(fetchedRaw, 6000) : null;
 
-  const fallback = fallbackDraft(input.url, input.relevance_note, input.focus_snapshot);
+  const fallback = fallbackDraft(input.url, cleanedNote, input.focus_snapshot);
 
   if (!fetched || fetched.length === 0) {
     return {
@@ -287,7 +274,7 @@ export async function generateStarterBrief(input: StarterBriefInput): Promise<St
   const deterministicFromSource = deterministicNormalizeDraft({
     source_takeaway: fetched,
     url: input.url,
-    relevance_note: input.relevance_note,
+    relevance_note: cleanedNote,
     focus_snapshot: input.focus_snapshot,
   });
 
@@ -296,7 +283,7 @@ export async function generateStarterBrief(input: StarterBriefInput): Promise<St
       {
         focus_snapshot: input.focus_snapshot,
         source_url: input.url,
-        relevance_note: input.relevance_note,
+        relevance_note: cleanedNote,
         source_excerpt: fetched,
         deterministic: {
           source_takeaway: deterministicFromSource.source_takeaway,
@@ -316,7 +303,7 @@ export async function generateStarterBrief(input: StarterBriefInput): Promise<St
       tension_or_assumption: planner.payload.tension_or_assumption,
       next_best_move: planner.payload.next_best_move,
       url: input.url,
-      relevance_note: input.relevance_note,
+      relevance_note: cleanedNote,
       focus_snapshot: input.focus_snapshot,
       model_name: planner.metadata.model_name,
       prompt_contract_version: planner.metadata.prompt_contract_version,
@@ -372,7 +359,7 @@ export async function generateStarterBrief(input: StarterBriefInput): Promise<St
   const generated = await generateWithOpenAI({
     apiKey: input.config.openai_api_key,
     url: input.url,
-    relevanceNote: input.relevance_note,
+    relevanceNote: cleanedNote,
     focusSnapshot: input.focus_snapshot,
     sourceText: fetched,
   });
