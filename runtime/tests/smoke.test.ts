@@ -502,3 +502,91 @@ test("publish is explicit, credit-safe, and idempotent by client_request_id", as
   const membershipAfterSuccess = await deps.persistence.getCycleMembership("p-pub", "applied-ai-labs", "cycle-001");
   assert.equal(membershipAfterSuccess?.credits, 0);
 });
+
+test("idea intake is enqueue-only and idempotent by idempotency_key", async () => {
+  const deps = makeDeps();
+  await seedCycle(deps, "cycle-001");
+
+  const first = await handleRequest(
+    new Request("http://localhost/api/notion/webhook", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        source_table: "idea_intake",
+        source_record_id: "idea-row-1",
+        event_type: "local_commit",
+        occurred_at: "2026-02-22T00:00:00.000Z",
+        idempotency_key: "idea-intake-1",
+        cycle_id: "cycle-001",
+        properties: {
+          idea: "Students need weekly AI practice in classes, not one-off workshops.",
+          created_by_id: "notion-user-123",
+          last_edited_time: "2026-02-22T00:00:00.000Z",
+        },
+      }),
+    }),
+    deps,
+  );
+
+  assert.equal(first.status, 200);
+  const firstBody = (await first.json()) as { result_code?: string; warehouse?: { deduped?: boolean; job_id?: string } };
+  assert.equal(firstBody.result_code, "WAREHOUSE_ENQUEUED");
+  assert.equal(firstBody.warehouse?.deduped, false);
+  assert.ok(firstBody.warehouse?.job_id);
+
+  const duplicate = await handleRequest(
+    new Request("http://localhost/api/notion/webhook", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        source_table: "idea_intake",
+        source_record_id: "idea-row-1",
+        event_type: "local_commit",
+        occurred_at: "2026-02-22T00:00:00.000Z",
+        idempotency_key: "idea-intake-1",
+        cycle_id: "cycle-001",
+        properties: {
+          idea: "Students need weekly AI practice in classes, not one-off workshops.",
+          created_by_id: "notion-user-123",
+          last_edited_time: "2026-02-22T00:00:00.000Z",
+        },
+      }),
+    }),
+    deps,
+  );
+
+  assert.equal(duplicate.status, 200);
+  const dupBody = (await duplicate.json()) as { result_code?: string; warehouse?: { deduped?: boolean; job_id?: string } };
+  assert.equal(dupBody.result_code, "DUPLICATE_SKIPPED");
+  assert.equal(dupBody.warehouse?.deduped, true);
+  assert.equal(dupBody.warehouse?.job_id, firstBody.warehouse?.job_id);
+});
+
+test("idea intake minimal webhook enqueues; workers enforce required fields", async () => {
+  const deps = makeDeps();
+  await seedCycle(deps, "cycle-001");
+
+  const response = await handleRequest(
+    new Request("http://localhost/api/notion/webhook", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        source_table: "idea_intake",
+        source_record_id: "idea-row-missing",
+        event_type: "local_commit",
+        occurred_at: "2026-02-22T01:00:00.000Z",
+        idempotency_key: "idea-intake-missing",
+        cycle_id: "cycle-001",
+        properties: {
+          last_edited_time: "2026-02-22T01:00:00.000Z",
+        },
+      }),
+    }),
+    deps,
+  );
+
+  assert.equal(response.status, 200);
+  const body = (await response.json()) as { result_code?: string; warehouse?: { job_id?: string } };
+  assert.equal(body.result_code, "WAREHOUSE_ENQUEUED");
+  assert.ok(body.warehouse?.job_id);
+});

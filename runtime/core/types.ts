@@ -323,3 +323,36 @@ export interface PublishTxnResult {
   credit_balance_after?: number;
   credit_delta?: number;
 }
+
+export type IdeaEmbeddingStatus = "pending" | "ready" | "failed";
+
+export interface IdeaEntryRecord extends ProgramContext {
+  entry_version_id: string;
+  notion_page_id: string;
+  version_no: number;
+  participant_key: string;
+  focus_id: string;
+  focus_text_snapshot: string;
+  idea_text_raw: string;
+  idea_text_norm: string;
+  notion_last_edited_time: string;
+  source_event_key: string;
+  created_at: string;
+}
+
+export interface IdeaEmbeddingRecord {
+  entry_version_id: string;
+  embedding_model: string;
+  embedding_status: IdeaEmbeddingStatus;
+  embedding_vector?: number[];
+  error_code?: string;
+  embedded_at?: string;
+  updated_at: string;
+}
+
+export interface IdeaEmbeddingBackfillItem {
+  entry_version_id: string;
+  idea_text_norm: string;
+  embedding_model: string;
+  embedding_status: IdeaEmbeddingStatus;
+}

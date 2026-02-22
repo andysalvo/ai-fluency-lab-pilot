@@ -3,7 +3,7 @@
 ## Active (Canonical)
 These files define the current build contract.
 
-1. `/docs/warehouse/00_MANIFESTO.md`
+1. `/docs/warehouse/00_CYCLE_01_SYSTEM_RATIONALE.md`
 2. `/docs/warehouse/01_PRODUCT_SCOPE.md`
 3. `/docs/warehouse/02_NOTION_FORM_SPEC.md`
 4. `/docs/warehouse/03_SUPABASE_WAREHOUSE_SCHEMA.md`

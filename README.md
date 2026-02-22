@@ -15,7 +15,7 @@ This repository is organized to keep the active system easy to understand:
 
 Start here:
 - `/docs/README.md`
-- `/docs/warehouse/00_MANIFESTO.md`
+- `/docs/warehouse/00_CYCLE_01_SYSTEM_RATIONALE.md`
 
 ## Focus Question (Cycle 1)
 How do we build sustained AI fluency inside a student population when the technology and norms are constantly shifting?

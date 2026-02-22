@@ -24,7 +24,7 @@ Ship a Notion-first submission flow where each student idea becomes:
 ## Locked v1 Decisions
 - `cycle_id = cycle_01`
 - `focus_id = ai_fluency_root`
-- identity = Notion `created_by` email
+- identity = Notion `created_by` user id when available; fallback to email
 - multiple submissions per student are allowed
 - edits produce new versions
 

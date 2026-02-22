@@ -7,11 +7,15 @@
 4. Editing same Notion response creates `version_no + 1` row.
 5. Embedding success marks row as `ready`.
 6. Embedding failure still keeps submission row and marks `failed/pending`.
+7. Missing required fields are marked `ignored` (not failed).
+8. Bursty delivery: 20 duplicate webhooks for the same Notion page+edit produce one job and one version row.
+9. Concurrency: two workers processing the same page concurrently do not collide on `(notion_page_id, version_no)`.
 
 ## Data Integrity Tests
 1. `source_event_key` uniqueness enforced.
 2. `idempotency_key` uniqueness enforced.
 3. `idea_entries_current` returns latest version correctly.
+4. `participant_key` prefers Notion user id; falls back to canonical email.
 
 ## Analysis Tests
 1. Similarity query returns nearest ideas for a probe vector.
@@ -24,3 +28,4 @@
 ## Operational Tests
 1. Backfill script resolves pending/failed embeddings.
 2. Failures return deterministic reason codes.
+3. Webhook handler does not perform Notion fetch or OpenAI calls (enqueue-only).

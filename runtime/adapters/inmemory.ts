@@ -1,6 +1,9 @@
 import type {
   CycleControlRecord,
   CycleMembershipRecord,
+  IdeaEmbeddingBackfillItem,
+  IdeaEmbeddingRecord,
+  IdeaEntryRecord,
   CycleSnapshotArtifactRecord,
   CycleSnapshotRecord,
   IngestRecord,
@@ -56,6 +59,9 @@ export class InMemoryPersistenceAdapter implements PersistenceAdapter {
   private readonly briefsById = new Map<string, StarterBriefRecord>();
   private readonly labRecordsById = new Map<string, LabRecordEntry>();
   private readonly publishReplayByIdempotencyKey = new Map<string, PublishTxnResult>();
+  private readonly ideaEntriesByVersionId = new Map<string, IdeaEntryRecord>();
+  private readonly ideaEmbeddingsByVersionId = new Map<string, IdeaEmbeddingRecord>();
+  private readonly warehouseJobByIdempotencyKey = new Map<string, { event_id: string; job_id: string }>();
 
   private runtimeControl: RuntimeControlRecord = {
     active_ingress_mode: "supabase_edge",
@@ -390,6 +396,143 @@ export class InMemoryPersistenceAdapter implements PersistenceAdapter {
       .filter((row) => row.cycle_id === cycleId)
       .sort((a, b) => a.created_at.localeCompare(b.created_at))
       .map((row) => clone(row));
+  }
+
+  async getIdeaEntryBySourceEventKey(sourceEventKey: string): Promise<IdeaEntryRecord | null> {
+    for (const row of this.ideaEntriesByVersionId.values()) {
+      if (row.source_event_key === sourceEventKey) {
+        return clone(row);
+      }
+    }
+
+    return null;
+  }
+
+  async getLatestIdeaEntryByNotionPageId(notionPageId: string): Promise<IdeaEntryRecord | null> {
+    const versions = [...this.ideaEntriesByVersionId.values()]
+      .filter((row) => row.notion_page_id === notionPageId)
+      .sort((a, b) => {
+        if (a.version_no !== b.version_no) {
+          return b.version_no - a.version_no;
+        }
+
+        return b.notion_last_edited_time.localeCompare(a.notion_last_edited_time);
+      });
+
+    return versions.length > 0 ? clone(versions[0]) : null;
+  }
+
+  async listIdeaEntryVersionsByNotionPageId(notionPageId: string): Promise<IdeaEntryRecord[]> {
+    return [...this.ideaEntriesByVersionId.values()]
+      .filter((row) => row.notion_page_id === notionPageId)
+      .sort((a, b) => a.version_no - b.version_no)
+      .map((row) => clone(row));
+  }
+
+  async insertIdeaEntry(
+    record: Omit<IdeaEntryRecord, "entry_version_id" | "created_at"> & { entry_version_id?: string; created_at?: string },
+  ): Promise<IdeaEntryRecord> {
+    const existing = await this.getIdeaEntryBySourceEventKey(record.source_event_key);
+    if (existing) {
+      return existing;
+    }
+
+    const entryVersionId = record.entry_version_id ?? makeId("idea");
+    const next: IdeaEntryRecord = {
+      ...record,
+      entry_version_id: entryVersionId,
+      created_at: record.created_at ?? new Date().toISOString(),
+    };
+
+    this.ideaEntriesByVersionId.set(entryVersionId, clone(next));
+    return clone(next);
+  }
+
+  async upsertIdeaEmbedding(
+    record: Omit<IdeaEmbeddingRecord, "updated_at"> & { updated_at?: string },
+  ): Promise<IdeaEmbeddingRecord> {
+    const current = this.ideaEmbeddingsByVersionId.get(record.entry_version_id);
+    const next: IdeaEmbeddingRecord = {
+      ...current,
+      ...record,
+      updated_at: record.updated_at ?? new Date().toISOString(),
+    };
+
+    this.ideaEmbeddingsByVersionId.set(record.entry_version_id, clone(next));
+    return clone(next);
+  }
+
+  async updateIdeaEmbedding(
+    entryVersionId: string,
+    update: {
+      embedding_status: IdeaEmbeddingRecord["embedding_status"];
+      embedding_vector?: number[];
+      error_code?: string;
+      embedded_at?: string;
+      updated_at?: string;
+    },
+  ): Promise<IdeaEmbeddingRecord | null> {
+    const current = this.ideaEmbeddingsByVersionId.get(entryVersionId);
+    if (!current) {
+      return null;
+    }
+
+    const next: IdeaEmbeddingRecord = {
+      ...current,
+      embedding_status: update.embedding_status,
+      embedding_vector: update.embedding_vector ?? current.embedding_vector,
+      error_code: update.error_code ?? current.error_code,
+      embedded_at: update.embedded_at ?? current.embedded_at,
+      updated_at: update.updated_at ?? new Date().toISOString(),
+    };
+
+    this.ideaEmbeddingsByVersionId.set(entryVersionId, clone(next));
+    return clone(next);
+  }
+
+  async listIdeaEmbeddingsForBackfill(limit: number): Promise<IdeaEmbeddingBackfillItem[]> {
+    const pending = [...this.ideaEmbeddingsByVersionId.values()]
+      .filter((row) => row.embedding_status === "pending" || row.embedding_status === "failed")
+      .sort((a, b) => a.updated_at.localeCompare(b.updated_at))
+      .slice(0, limit);
+
+    const items: IdeaEmbeddingBackfillItem[] = [];
+    for (const row of pending) {
+      const entry = this.ideaEntriesByVersionId.get(row.entry_version_id);
+      if (!entry) {
+        continue;
+      }
+
+      items.push({
+        entry_version_id: row.entry_version_id,
+        idea_text_norm: entry.idea_text_norm,
+        embedding_model: row.embedding_model,
+        embedding_status: row.embedding_status,
+      });
+    }
+
+    return items.map((item) => clone(item));
+  }
+
+  async warehouseEnqueueIdeaJob(input: {
+    idempotency_key: string;
+    source_table: string;
+    source_record_id: string;
+    event_type: string;
+    occurred_at: string;
+    organization_id: string;
+    cycle_id: string;
+    root_problem_version_id: string;
+  }): Promise<{ deduped: boolean; event_id: string | null; job_id: string | null }> {
+    const existing = this.warehouseJobByIdempotencyKey.get(input.idempotency_key);
+    if (existing) {
+      return { deduped: true, event_id: existing.event_id, job_id: existing.job_id };
+    }
+
+    const eventId = makeId("evt");
+    const jobId = makeId("job");
+    this.warehouseJobByIdempotencyKey.set(input.idempotency_key, { event_id: eventId, job_id: jobId });
+    return { deduped: false, event_id: eventId, job_id: jobId };
   }
 
   async publishLabRecordTxn(input: PublishTxnInput): Promise<PublishTxnResult> {

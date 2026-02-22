@@ -92,6 +92,19 @@ function cycleIdFromRequest(payload: Record<string, unknown>, request: Request):
   return readString(payload, "cycle_id") ?? request.headers.get("x-cycle-id") ?? undefined;
 }
 
+function isIdeaIntakeSource(sourceTable: string | undefined, config: RuntimeConfig): boolean {
+  if (!sourceTable) {
+    return false;
+  }
+
+  const normalized = sourceTable.trim().toLowerCase();
+  if (normalized === "idea_intake" || normalized === "idea intake") {
+    return true;
+  }
+
+  return Boolean(config.notion_db_idea_intake_id && normalized === config.notion_db_idea_intake_id.toLowerCase());
+}
+
 function getDefaultContext(): DefaultRuntimeContext {
   if (defaultContext) {
     return defaultContext;
@@ -253,8 +266,60 @@ export async function handleRequest(request: Request, deps: EdgeHandlerDeps = {}
   if (request.method === "POST" && url.pathname === "/api/notion/webhook") {
     const payloadRaw = await parseJsonBody(request);
     const payload = asObject(payloadRaw);
+    const sourceTable = readString(payload, "source_table");
     if (!payload.cycle_id) {
       payload.cycle_id = request.headers.get("x-cycle-id") ?? undefined;
+    }
+    if (!payload.cycle_id && isIdeaIntakeSource(sourceTable, config)) {
+      payload.cycle_id = config.default_cycle_id;
+    }
+    if (!payload.idempotency_key) {
+      const sourceRecordId = readString(payload, "source_record_id");
+      const occurredAt = readString(payload, "occurred_at");
+      if (sourceRecordId && occurredAt) {
+        payload.idempotency_key = `${sourceRecordId}:${occurredAt}`;
+      }
+    }
+
+    // Warehouse v1: idea intake is enqueue-only (no Notion fetch, no embeddings, no slow calls).
+    if (isIdeaIntakeSource(sourceTable, config)) {
+      const sourceRecordId = readString(payload, "source_record_id");
+      const occurredAt = readString(payload, "occurred_at");
+      const eventType = readString(payload, "event_type") ?? "commit_event";
+      const idempotencyKey = readString(payload, "idempotency_key");
+
+      if (!sourceRecordId || !occurredAt || !idempotencyKey) {
+        return json(400, { ok: false, result_code: "PAYLOAD_INVALID", message: "Missing required fields for idea intake." });
+      }
+
+      const notionPayload = payload as unknown as NotionLikeWebhookPayload;
+      const context = resolveProgramContext(notionPayload, config);
+      const enqueue = await persistence.warehouseEnqueueIdeaJob({
+        idempotency_key: idempotencyKey,
+        source_table: sourceTable ?? "idea_intake",
+        source_record_id: sourceRecordId,
+        event_type: eventType,
+        occurred_at: occurredAt,
+        organization_id: context.organization_id,
+        cycle_id: context.cycle_id,
+        root_problem_version_id: context.root_problem_version_id,
+      });
+
+      return json(200, {
+        ok: true,
+        ingest_state: enqueue.deduped ? "duplicate" : "processed",
+        trigger_type: "local_commit",
+        result_code: enqueue.deduped ? "DUPLICATE_SKIPPED" : "WAREHOUSE_ENQUEUED",
+        message: enqueue.deduped ? "Duplicate webhook delivery skipped." : "Idea intake accepted and queued for async processing.",
+        organization_id: context.organization_id,
+        cycle_id: context.cycle_id,
+        root_problem_version_id: context.root_problem_version_id,
+        warehouse: {
+          deduped: enqueue.deduped,
+          event_id: enqueue.event_id,
+          job_id: enqueue.job_id,
+        },
+      });
     }
 
     const result = await handleIngest(payload, { persistence, config, now });

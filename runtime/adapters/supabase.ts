@@ -3,6 +3,9 @@ import type {
   CycleMembershipRecord,
   CycleSnapshotArtifactRecord,
   CycleSnapshotRecord,
+  IdeaEmbeddingBackfillItem,
+  IdeaEmbeddingRecord,
+  IdeaEntryRecord,
   IngestRecord,
   LabRecordEntry,
   ParticipantRecord,
@@ -66,6 +69,51 @@ function maybeUuid(value: string | undefined): string | undefined {
 
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
   return uuidRegex.test(value) ? value : undefined;
+}
+
+function parseVector(value: unknown): number[] | undefined {
+  if (Array.isArray(value)) {
+    const parsed = value.filter((item) => typeof item === "number" && Number.isFinite(item)) as number[];
+    return parsed.length > 0 ? parsed : undefined;
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!(trimmed.startsWith("[") && trimmed.endsWith("]"))) {
+      return undefined;
+    }
+
+    const body = trimmed.slice(1, -1).trim();
+    if (!body) {
+      return [];
+    }
+
+    const parts = body.split(",");
+    const out: number[] = [];
+    for (const part of parts) {
+      const n = Number(part.trim());
+      if (!Number.isFinite(n)) {
+        return undefined;
+      }
+      out.push(n);
+    }
+
+    return out;
+  }
+
+  return undefined;
+}
+
+function vectorToPgvector(value: number[] | undefined): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  if (value.length === 0) {
+    return "[]";
+  }
+
+  return `[${value.join(",")}]`;
 }
 
 function mapMembershipToAllowlistState(state: ProtectedActionAuditRecord["membership_state"]): "allowlisted" | "active" | "suspended" | "revoked" {
@@ -310,6 +358,37 @@ export class SupabasePersistenceAdapter implements PersistenceAdapter {
       organization_id: asString(row.organization_id),
       cycle_id: asString(row.cycle_id),
       root_problem_version_id: asString(row.root_problem_version_id),
+    };
+  }
+
+  private mapIdeaEntry(row: Record<string, unknown>): IdeaEntryRecord {
+    return {
+      entry_version_id: asString(row.entry_version_id),
+      notion_page_id: asString(row.notion_page_id),
+      version_no: asNumber(row.version_no, 1),
+      participant_key: asString(row.participant_key),
+      organization_id: asString(row.organization_id),
+      cycle_id: asString(row.cycle_id),
+      root_problem_version_id: asString(row.root_problem_version_id),
+      focus_id: asString(row.focus_id),
+      focus_text_snapshot: asString(row.focus_text_snapshot),
+      idea_text_raw: asString(row.idea_text_raw),
+      idea_text_norm: asString(row.idea_text_norm),
+      notion_last_edited_time: asString(row.notion_last_edited_time),
+      source_event_key: asString(row.source_event_key),
+      created_at: asString(row.created_at),
+    };
+  }
+
+  private mapIdeaEmbedding(row: Record<string, unknown>): IdeaEmbeddingRecord {
+    return {
+      entry_version_id: asString(row.entry_version_id),
+      embedding_model: asString(row.embedding_model),
+      embedding_status: asString(row.embedding_status) as IdeaEmbeddingRecord["embedding_status"],
+      embedding_vector: parseVector(row.embedding_vector),
+      error_code: toIsoOrUndefined(row.error_code),
+      embedded_at: toIsoOrUndefined(row.embedded_at),
+      updated_at: asString(row.updated_at),
     };
   }
 
@@ -981,6 +1060,195 @@ export class SupabasePersistenceAdapter implements PersistenceAdapter {
     const payload = await this.expectOk(response);
     const rows = Array.isArray(payload) ? payload : [];
     return rows.map((row) => this.mapLabRecord(asObject(row)));
+  }
+
+  async getIdeaEntryBySourceEventKey(sourceEventKey: string): Promise<IdeaEntryRecord | null> {
+    const url = this.tableUrl("idea_entries", {
+      select: "*",
+      source_event_key: `eq.${sourceEventKey}`,
+      limit: "1",
+    });
+    const response = await this.request("GET", url);
+    const payload = await this.expectOk(response);
+    const rows = Array.isArray(payload) ? payload : [];
+    if (rows.length === 0) {
+      return null;
+    }
+
+    return this.mapIdeaEntry(asObject(rows[0]));
+  }
+
+  async getLatestIdeaEntryByNotionPageId(notionPageId: string): Promise<IdeaEntryRecord | null> {
+    const url = this.tableUrl("idea_entries", {
+      select: "*",
+      notion_page_id: `eq.${notionPageId}`,
+      order: "version_no.desc,notion_last_edited_time.desc",
+      limit: "1",
+    });
+    const response = await this.request("GET", url);
+    const payload = await this.expectOk(response);
+    const rows = Array.isArray(payload) ? payload : [];
+    if (rows.length === 0) {
+      return null;
+    }
+
+    return this.mapIdeaEntry(asObject(rows[0]));
+  }
+
+  async listIdeaEntryVersionsByNotionPageId(notionPageId: string): Promise<IdeaEntryRecord[]> {
+    const url = this.tableUrl("idea_entries", {
+      select: "*",
+      notion_page_id: `eq.${notionPageId}`,
+      order: "version_no.asc",
+    });
+    const response = await this.request("GET", url);
+    const payload = await this.expectOk(response);
+    const rows = Array.isArray(payload) ? payload : [];
+    return rows.map((row) => this.mapIdeaEntry(asObject(row)));
+  }
+
+  async insertIdeaEntry(
+    record: Omit<IdeaEntryRecord, "entry_version_id" | "created_at"> & { entry_version_id?: string; created_at?: string },
+  ): Promise<IdeaEntryRecord> {
+    const url = this.tableUrl("idea_entries", { select: "*" });
+    const body = {
+      entry_version_id: maybeUuid(record.entry_version_id),
+      notion_page_id: record.notion_page_id,
+      version_no: record.version_no,
+      participant_key: record.participant_key,
+      organization_id: record.organization_id,
+      cycle_id: record.cycle_id,
+      root_problem_version_id: record.root_problem_version_id,
+      focus_id: record.focus_id,
+      focus_text_snapshot: record.focus_text_snapshot,
+      idea_text_raw: record.idea_text_raw,
+      idea_text_norm: record.idea_text_norm,
+      notion_last_edited_time: record.notion_last_edited_time,
+      source_event_key: record.source_event_key,
+      created_at: record.created_at,
+    };
+
+    const response = await this.request("POST", url, body, { Prefer: "return=representation" });
+    const payload = await this.expectOk(response);
+    const rows = Array.isArray(payload) ? payload : [];
+    if (rows.length === 0) {
+      throw new Error("insertIdeaEntry returned no rows");
+    }
+
+    return this.mapIdeaEntry(asObject(rows[0]));
+  }
+
+  async upsertIdeaEmbedding(
+    record: Omit<IdeaEmbeddingRecord, "updated_at"> & { updated_at?: string },
+  ): Promise<IdeaEmbeddingRecord> {
+    const url = this.tableUrl("idea_embeddings", {
+      select: "*",
+      on_conflict: "entry_version_id",
+    });
+    const body = {
+      entry_version_id: maybeUuid(record.entry_version_id),
+      embedding_model: record.embedding_model,
+      embedding_status: record.embedding_status,
+      embedding_vector: vectorToPgvector(record.embedding_vector),
+      error_code: record.error_code,
+      embedded_at: record.embedded_at,
+      updated_at: record.updated_at,
+    };
+
+    const response = await this.request("POST", url, body, {
+      Prefer: "resolution=merge-duplicates,return=representation",
+    });
+    const payload = await this.expectOk(response);
+    const rows = Array.isArray(payload) ? payload : [];
+    if (rows.length === 0) {
+      throw new Error("upsertIdeaEmbedding returned no rows");
+    }
+
+    return this.mapIdeaEmbedding(asObject(rows[0]));
+  }
+
+  async updateIdeaEmbedding(
+    entryVersionId: string,
+    update: {
+      embedding_status: IdeaEmbeddingRecord["embedding_status"];
+      embedding_vector?: number[];
+      error_code?: string;
+      embedded_at?: string;
+      updated_at?: string;
+    },
+  ): Promise<IdeaEmbeddingRecord | null> {
+    const url = this.tableUrl("idea_embeddings", {
+      select: "*",
+      entry_version_id: `eq.${entryVersionId}`,
+    });
+    const body = {
+      embedding_status: update.embedding_status,
+      embedding_vector: update.embedding_vector ? vectorToPgvector(update.embedding_vector) : undefined,
+      error_code: update.error_code,
+      embedded_at: update.embedded_at,
+      updated_at: update.updated_at,
+    };
+
+    const response = await this.request("PATCH", url, body, { Prefer: "return=representation" });
+    const payload = await this.expectOk(response);
+    const rows = Array.isArray(payload) ? payload : [];
+    if (rows.length === 0) {
+      return null;
+    }
+
+    return this.mapIdeaEmbedding(asObject(rows[0]));
+  }
+
+  async listIdeaEmbeddingsForBackfill(limit: number): Promise<IdeaEmbeddingBackfillItem[]> {
+    const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 50;
+    const url = this.tableUrl("idea_embeddings_backfill", {
+      select: "*",
+      order: "updated_at.asc",
+      limit: String(safeLimit),
+    });
+    const response = await this.request("GET", url);
+    const payload = await this.expectOk(response);
+    const rows = Array.isArray(payload) ? payload : [];
+    return rows.map((row) => {
+      const item = asObject(row);
+      return {
+        entry_version_id: asString(item.entry_version_id),
+        idea_text_norm: asString(item.idea_text_norm),
+        embedding_model: asString(item.embedding_model),
+        embedding_status: asString(item.embedding_status) as IdeaEmbeddingBackfillItem["embedding_status"],
+      };
+    });
+  }
+
+  async warehouseEnqueueIdeaJob(input: {
+    idempotency_key: string;
+    source_table: string;
+    source_record_id: string;
+    event_type: string;
+    occurred_at: string;
+    organization_id: string;
+    cycle_id: string;
+    root_problem_version_id: string;
+  }): Promise<{ deduped: boolean; event_id: string | null; job_id: string | null }> {
+    const rpcUrl = new URL(`${this.rpcBase}/warehouse_enqueue_idea_job`);
+    const response = await this.request("POST", rpcUrl, {
+      p_idempotency_key: input.idempotency_key,
+      p_source_table: input.source_table,
+      p_source_record_id: input.source_record_id,
+      p_event_type: input.event_type,
+      p_occurred_at: input.occurred_at,
+      p_organization_id: input.organization_id,
+      p_cycle_id: input.cycle_id,
+      p_root_problem_version_id: input.root_problem_version_id,
+    });
+
+    const payload = await this.expectOk(response);
+    const row = Array.isArray(payload) ? asObject(payload[0]) : asObject(payload);
+    return {
+      deduped: asBoolean(row.deduped),
+      event_id: row.event_id ? asString(row.event_id) : null,
+      job_id: row.job_id ? asString(row.job_id) : null,
+    };
   }
 
   async publishLabRecordTxn(input: PublishTxnInput): Promise<PublishTxnResult> {
