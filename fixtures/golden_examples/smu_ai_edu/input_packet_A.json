@@ -1,0 +1,16 @@
+{
+  "packet_id": "smu_ai_edu_input_A",
+  "source_url": "https://learningsciences.smu.edu/blog/artificial-intelligence-in-education",
+  "canonical_url": "https://learningsciences.smu.edu/blog/artificial-intelligence-in-education",
+  "focus_snapshot": "How do we build sustained AI fluency inside a student population when the technology and norms are constantly shifting?",
+  "student_focus_text": "How can students stay fluent with AI as tools and norms keep changing?",
+  "student_relevance_note": "The article shows both upside and risk: AI can personalize learning, but schools still need ethics, privacy, and teaching quality. This connects to our focus because sustained fluency means students can make good decisions with AI over time, not just use one tool.",
+  "source_excerpt": "Artificial intelligence is changing education by enabling adaptive learning, faster feedback, and support for different learner needs. The article also highlights practical concerns: data privacy, uneven access, implementation quality, and the need for educator training. It argues AI should augment teaching rather than replace human judgment, and schools should build responsible policies while integrating AI into classroom practice.",
+  "frozen_at": "2026-02-22T00:00:00Z",
+  "prompt_contract_version": "initial_thread_draft_v1",
+  "model_policy": {
+    "primary_model": "gpt-4.1",
+    "temperature": 0,
+    "top_p": 1
+  }
+}

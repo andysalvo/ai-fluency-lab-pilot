@@ -22,8 +22,19 @@ export interface RuntimeConfig {
   notion_integration_token?: string;
   notion_api_base_url: string;
   notion_root_page_url?: string;
+  notion_db_threads_id?: string;
+  notion_db_turns_id?: string;
+  notion_db_outputs_id?: string;
   notion_db_research_inbox_id?: string;
   notion_db_team_intake_id?: string;
+  session_secret: string;
+  oauth_google_client_id?: string;
+  oauth_google_client_secret?: string;
+  oauth_google_redirect_uri?: string;
+  oauth_google_auth_url: string;
+  oauth_google_token_url: string;
+  oauth_google_tokeninfo_url: string;
+  oauth_google_scopes: string[];
 }
 
 function asGlobalRole(value: string | undefined): GlobalRole {
@@ -87,7 +98,18 @@ export function loadRuntimeConfig(env: Record<string, string | undefined>): Runt
     notion_integration_token: env.PILOT_NOTION_INTEGRATION_TOKEN ?? env.NOTION_INTEGRATION_TOKEN,
     notion_api_base_url: env.PILOT_NOTION_API_BASE_URL ?? "https://api.notion.com/v1",
     notion_root_page_url: env.PILOT_NOTION_ROOT_PAGE_URL,
+    notion_db_threads_id: env.PILOT_NOTION_DB_THREADS_ID,
+    notion_db_turns_id: env.PILOT_NOTION_DB_TURNS_ID,
+    notion_db_outputs_id: env.PILOT_NOTION_DB_OUTPUTS_ID,
     notion_db_research_inbox_id: env.PILOT_NOTION_DB_RESEARCH_INBOX_ID,
     notion_db_team_intake_id: env.PILOT_NOTION_DB_TEAM_INTAKE_ID,
+    session_secret: env.PILOT_SESSION_SECRET ?? "pilot-dev-insecure-session-secret",
+    oauth_google_client_id: env.PILOT_GOOGLE_CLIENT_ID,
+    oauth_google_client_secret: env.PILOT_GOOGLE_CLIENT_SECRET,
+    oauth_google_redirect_uri: env.PILOT_GOOGLE_REDIRECT_URI,
+    oauth_google_auth_url: env.PILOT_GOOGLE_AUTH_URL ?? "https://accounts.google.com/o/oauth2/v2/auth",
+    oauth_google_token_url: env.PILOT_GOOGLE_TOKEN_URL ?? "https://oauth2.googleapis.com/token",
+    oauth_google_tokeninfo_url: env.PILOT_GOOGLE_TOKENINFO_URL ?? "https://oauth2.googleapis.com/tokeninfo",
+    oauth_google_scopes: parseList(env.PILOT_GOOGLE_SCOPES, ["openid", "email", "profile"]),
   };
 }

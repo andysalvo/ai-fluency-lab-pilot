@@ -319,7 +319,7 @@ async function handleResearchInbox(payload: NotionLikeWebhookPayload, deps: Proc
     status: "processing",
     payload: {
       status_label: "Processing",
-      message: "Starter Brief is being prepared.",
+      message: "Initial Thread Draft is being prepared.",
       provenance: `Built only from: ${url}`,
     },
     replay_payload: {
@@ -339,7 +339,7 @@ async function handleResearchInbox(payload: NotionLikeWebhookPayload, deps: Proc
 
   const updatedBrief = await deps.persistence.updateStarterBrief(starterBrief.starter_brief_id, {
     status: generated.status,
-    payload: generated.payload,
+    payload: generated.payload as unknown as Record<string, unknown>,
     replay_payload: generated.replay_payload,
     updated_at: now(),
   });
@@ -357,7 +357,7 @@ async function handleResearchInbox(payload: NotionLikeWebhookPayload, deps: Proc
   return {
     ok: true,
     result_code: "STARTER_BRIEF_READY",
-    message: "Source accepted and Starter Brief generated.",
+    message: "Source accepted and Initial Thread Draft generated.",
     details: {
       thread_id: threadId,
       source_submission_id: source.source_submission_id,
