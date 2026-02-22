@@ -8,6 +8,7 @@ import type {
   IngestRecord,
   LabBriefDraftRecord,
   LabRecordEntry,
+  ModelRunRecord,
   ParticipantRecord,
   PublishTxnInput,
   PublishTxnResult,
@@ -56,6 +57,13 @@ function asNumber(value: unknown, fallback = 0): number {
 
 function asBoolean(value: unknown, fallback = false): boolean {
   return typeof value === "boolean" ? value : fallback;
+}
+
+function asPlannerFallbackReason(value: unknown): ModelRunRecord["fallback_reason"] {
+  if (value === "TIMEOUT" || value === "RATE_LIMIT" || value === "SCHEMA" || value === "CAPACITY") {
+    return value;
+  }
+  return undefined;
 }
 
 function joinError(error: SupabaseError): string {
@@ -378,6 +386,26 @@ export class SupabasePersistenceAdapter implements PersistenceAdapter {
       organization_id: asString(row.organization_id),
       cycle_id: asString(row.cycle_id),
       root_problem_version_id: asString(row.root_problem_version_id),
+    };
+  }
+
+  private mapModelRun(row: Record<string, unknown>): ModelRunRecord {
+    return {
+      run_id: asString(row.run_id),
+      organization_id: asString(row.organization_id),
+      cycle_id: asString(row.cycle_id),
+      root_problem_version_id: asString(row.root_problem_version_id),
+      thread_id: toIsoOrUndefined(row.thread_id),
+      participant_id: toIsoOrUndefined(row.participant_id),
+      action_type: asString(row.action_type) as ModelRunRecord["action_type"],
+      provider: asString(row.provider) as ModelRunRecord["provider"],
+      model_name: asString(row.model_name),
+      status: asString(row.status) as ModelRunRecord["status"],
+      prompt_contract_version: asString(row.prompt_contract_version),
+      latency_ms: asNumber(row.latency_ms),
+      estimated_cost_usd: typeof row.estimated_cost_usd === "number" ? row.estimated_cost_usd : undefined,
+      fallback_reason: asPlannerFallbackReason(row.fallback_reason),
+      created_at: asString(row.created_at),
     };
   }
 
@@ -1346,6 +1374,54 @@ export class SupabasePersistenceAdapter implements PersistenceAdapter {
     const payload = await this.expectOk(response);
     const rows = Array.isArray(payload) ? payload : [];
     return rows.map((row) => this.mapLabBriefDraft(asObject(row)));
+  }
+
+  async insertModelRun(
+    record: Omit<ModelRunRecord, "run_id" | "created_at"> & { run_id?: string; created_at?: string },
+  ): Promise<ModelRunRecord> {
+    const url = this.tableUrl("model_runs", { select: "*" });
+    const response = await this.request(
+      "POST",
+      url,
+      {
+        run_id: maybeUuid(record.run_id),
+        organization_id: record.organization_id,
+        cycle_id: record.cycle_id,
+        root_problem_version_id: record.root_problem_version_id,
+        thread_id: record.thread_id,
+        participant_id: maybeUuid(record.participant_id),
+        action_type: record.action_type,
+        provider: record.provider,
+        model_name: record.model_name,
+        status: record.status,
+        prompt_contract_version: record.prompt_contract_version,
+        latency_ms: record.latency_ms,
+        estimated_cost_usd: record.estimated_cost_usd,
+        fallback_reason: record.fallback_reason,
+        created_at: record.created_at,
+      },
+      { Prefer: "return=representation" },
+    );
+    const payload = await this.expectOk(response);
+    const rows = Array.isArray(payload) ? payload : [];
+    if (rows.length === 0) {
+      throw new Error("insertModelRun returned no rows");
+    }
+    return this.mapModelRun(asObject(rows[0]));
+  }
+
+  async listModelRunsForCycle(organizationId: string, cycleId: string, limit = 200): Promise<ModelRunRecord[]> {
+    const url = this.tableUrl("model_runs", {
+      select: "*",
+      organization_id: `eq.${organizationId}`,
+      cycle_id: `eq.${cycleId}`,
+      order: "created_at.desc",
+      limit: String(limit),
+    });
+    const response = await this.request("GET", url);
+    const payload = await this.expectOk(response);
+    const rows = Array.isArray(payload) ? payload : [];
+    return rows.map((row) => this.mapModelRun(asObject(row)));
   }
 
   async listCycleMemberships(organizationId: string, cycleId: string): Promise<CycleMembershipRecord[]> {

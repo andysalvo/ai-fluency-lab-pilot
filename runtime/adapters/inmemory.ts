@@ -8,6 +8,7 @@ import type {
   GuidedRoundRecord,
   LabBriefDraftRecord,
   LabRecordEntry,
+  ModelRunRecord,
   ParticipantRecord,
   PublishTxnInput,
   PublishTxnResult,
@@ -65,6 +66,7 @@ export class InMemoryPersistenceAdapter implements PersistenceAdapter {
   private readonly guidedItemsById = new Map<string, GuidedQuestionItemRecord>();
   private readonly labBriefDraftByThreadCycle = new Map<string, LabBriefDraftRecord>();
   private readonly labRecordsById = new Map<string, LabRecordEntry>();
+  private readonly modelRunsById = new Map<string, ModelRunRecord>();
   private readonly publishReplayByIdempotencyKey = new Map<string, PublishTxnResult>();
 
   private runtimeControl: RuntimeControlRecord = {
@@ -570,6 +572,27 @@ export class InMemoryPersistenceAdapter implements PersistenceAdapter {
     return [...this.labBriefDraftByThreadCycle.values()]
       .filter((row) => row.cycle_id === cycleId)
       .sort((a, b) => a.created_at.localeCompare(b.created_at))
+      .map((row) => clone(row));
+  }
+
+  async insertModelRun(
+    record: Omit<ModelRunRecord, "run_id" | "created_at"> & { run_id?: string; created_at?: string },
+  ): Promise<ModelRunRecord> {
+    const runId = record.run_id ?? makeId("model-run");
+    const next: ModelRunRecord = {
+      ...record,
+      run_id: runId,
+      created_at: record.created_at ?? new Date().toISOString(),
+    };
+    this.modelRunsById.set(runId, clone(next));
+    return clone(next);
+  }
+
+  async listModelRunsForCycle(organizationId: string, cycleId: string, limit = 200): Promise<ModelRunRecord[]> {
+    return [...this.modelRunsById.values()]
+      .filter((row) => row.organization_id === organizationId && row.cycle_id === cycleId)
+      .sort((a, b) => b.created_at.localeCompare(a.created_at))
+      .slice(0, Math.max(1, limit))
       .map((row) => clone(row));
   }
 

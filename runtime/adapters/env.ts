@@ -19,6 +19,12 @@ export interface RuntimeConfig {
   focus_snapshot: string;
   default_model: string;
   openai_api_key?: string;
+  use_kimi_planner: boolean;
+  kimi_api_key?: string;
+  kimi_base_url: string;
+  kimi_planner_model: string;
+  kimi_timeout_ms: number;
+  kimi_max_concurrency: number;
   notion_integration_token?: string;
   notion_api_base_url: string;
   notion_root_page_url?: string;
@@ -74,6 +80,30 @@ function asPersistenceBackend(value: string | undefined): PersistenceBackend {
   return "inmemory";
 }
 
+function asBoolean(value: string | undefined, fallback: boolean): boolean {
+  if (typeof value !== "string") {
+    return fallback;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "true" || normalized === "1" || normalized === "yes") {
+    return true;
+  }
+  if (normalized === "false" || normalized === "0" || normalized === "no") {
+    return false;
+  }
+
+  return fallback;
+}
+
+function asPositiveNumber(value: string | undefined, fallback: number): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return parsed;
+}
+
 export function loadRuntimeConfig(env: Record<string, string | undefined>): RuntimeConfig {
   return {
     persistence_backend: asPersistenceBackend(env.PILOT_PERSISTENCE_BACKEND),
@@ -95,6 +125,12 @@ export function loadRuntimeConfig(env: Record<string, string | undefined>): Runt
       "How do we build sustained AI fluency inside a student population when the technology and norms are constantly shifting?",
     default_model: env.PILOT_DEFAULT_MODEL ?? "gpt-4o-mini",
     openai_api_key: env.PILOT_OPENAI_API_KEY ?? env.OPENAI_API_KEY,
+    use_kimi_planner: asBoolean(env.PILOT_USE_KIMI_PLANNER, false),
+    kimi_api_key: env.PILOT_KIMI_API_KEY ?? env.KIMI_API_KEY,
+    kimi_base_url: env.PILOT_KIMI_BASE_URL ?? env.KIMI_BASE_URL ?? "https://api.moonshot.ai/v1",
+    kimi_planner_model: env.PILOT_KIMI_PLANNER_MODEL ?? env.KIMI_PLANNER_MODEL ?? "kimi-k2",
+    kimi_timeout_ms: asPositiveNumber(env.PILOT_KIMI_TIMEOUT_MS, 9000),
+    kimi_max_concurrency: asPositiveNumber(env.PILOT_KIMI_MAX_CONCURRENCY, 3),
     notion_integration_token: env.PILOT_NOTION_INTEGRATION_TOKEN ?? env.NOTION_INTEGRATION_TOKEN,
     notion_api_base_url: env.PILOT_NOTION_API_BASE_URL ?? "https://api.notion.com/v1",
     notion_root_page_url: env.PILOT_NOTION_ROOT_PAGE_URL,

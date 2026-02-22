@@ -241,6 +241,20 @@ export interface LabBriefContent {
 
 export interface LabBriefGenerationContent extends LabBriefContent, GenerationMetadata {}
 
+export type PlannerProvider = "deterministic" | "kimi";
+export type PlannerRunStatus = "success" | "fallback";
+export type PlannerFallbackReason = "TIMEOUT" | "RATE_LIMIT" | "SCHEMA" | "CAPACITY";
+
+export interface PlannerRunMetadata {
+  provider: PlannerProvider;
+  model_name: string;
+  status: PlannerRunStatus;
+  prompt_contract_version: string;
+  latency_ms: number;
+  estimated_cost_usd?: number;
+  fallback_reason?: PlannerFallbackReason;
+}
+
 export interface SourceSubmitResponse extends ProgramContext {
   ok: boolean;
   reason_code: string;
@@ -267,6 +281,10 @@ export interface ThreadWorkspaceResponse extends ProgramContext {
   lab_brief_draft?: LabBriefDraftRecord | null;
   readiness?: ReadinessEvaluateResponse;
   publish_state: "not_ready" | "ready_pending_confirmation" | "published";
+  current_stage?: "source_ready" | "draft_ready" | "round_in_progress" | "round_complete" | "brief_ready" | "ready_to_publish" | "published";
+  primary_action_label?: string;
+  progress_label?: string;
+  next_question?: Pick<GuidedQuestionItemRecord, "question_item_id" | "ordinal" | "prompt" | "options">;
   next_best_action: string;
 }
 
@@ -307,6 +325,13 @@ export interface OperatorSummaryResponse extends ProgramContext {
   starter_drafts_ready_total?: number;
   rounds_completed_total?: number;
   lab_brief_drafts_total?: number;
+  planner_runs_total?: number;
+  planner_fallback_total?: number;
+  planner_rate_limited_total?: number;
+  planner_avg_latency_ms?: number;
+  planner_estimated_cost_usd?: number;
+  planner_provider_counts?: Record<string, number>;
+  telemetry_write_failed_count?: number;
 }
 
 export interface CycleAdminActionResponse extends ProgramContext {
@@ -444,6 +469,21 @@ export interface LabBriefDraftRecord extends ProgramContext {
   generation_metadata: Record<string, unknown>;
   created_at: string;
   updated_at: string;
+}
+
+export interface ModelRunRecord extends ProgramContext {
+  run_id: string;
+  thread_id?: string;
+  participant_id?: string;
+  action_type: "guided_round" | "lab_brief_proposal";
+  provider: PlannerProvider;
+  model_name: string;
+  status: PlannerRunStatus;
+  prompt_contract_version: string;
+  latency_ms: number;
+  estimated_cost_usd?: number;
+  fallback_reason?: PlannerFallbackReason;
+  created_at: string;
 }
 
 export interface PublishTxnInput extends ProgramContext {

@@ -12,8 +12,8 @@ import {
 } from "../core/cycle-admin.js";
 import { computePilotIdempotencyKey } from "../core/idempotency.js";
 import { handleIngest } from "../core/ingest-handler.js";
-import { generateGuidedRoundQuestions, summarizeGuidedRound } from "../core/guided-questions.js";
-import { proposeLabBriefFromThread } from "../core/lab-brief-proposal.js";
+import { summarizeGuidedRound } from "../core/guided-questions.js";
+import { generateGuidedRoundWithProvider, proposeLabBriefWithProvider } from "../core/planner-provider.js";
 import {
   buildResearchInboxPageProperties,
   createNotionCardPage,
@@ -21,7 +21,7 @@ import {
   ensureResearchInboxSchema,
   fetchNotionDatabasePayload,
 } from "../core/notion.js";
-import { mapWorkspaceToCardStack, renderCardsHtml } from "../frontstage/cards.js";
+import { mapWorkspaceToCardStack, mapWorkspaceToStudentSimpleView, renderCardsHtml } from "../frontstage/cards.js";
 import { normalizeLabBriefContent } from "../core/lab-brief.js";
 import { buildGoogleAuthUrl, exchangeGoogleCodeForIdentity } from "../core/oauth-google.js";
 import { executePublishAction, guardAndAuditAction } from "../core/protected-actions.js";
@@ -30,6 +30,7 @@ import { evaluateReadiness } from "../core/readiness.js";
 import { clearSessionCookie, createOAuthStateToken, createSessionCookie, readOAuthStateToken, readSessionClaims } from "../core/session.js";
 import { processCommitEvent } from "../core/webhook-commit.js";
 import type {
+  PlannerRunMetadata,
   NotionLikeWebhookPayload,
   OperatorSummaryResponse,
   SourceSubmitResponse,
@@ -43,6 +44,7 @@ interface DefaultRuntimeContext {
 }
 
 let defaultContext: DefaultRuntimeContext | null = null;
+let telemetryWriteFailedCount = 0;
 
 function getDefaultEnv(): Record<string, string | undefined> {
   if (typeof process !== "undefined" && process.env) {
@@ -274,39 +276,88 @@ async function resolveOperatorContext(
   };
 }
 
-function chooseNextBestAction(workspace: {
+function stageLabels(stage: NonNullable<ThreadWorkspaceResponse["current_stage"]>): {
+  primary_action_label: string;
+  progress_label: string;
+  next_best_action: string;
+} {
+  switch (stage) {
+    case "source_ready":
+      return {
+        primary_action_label: "Add a Source",
+        progress_label: "Step 1 of 6",
+        next_best_action: "Add one source URL and a short note to start your thread.",
+      };
+    case "draft_ready":
+      return {
+        primary_action_label: "Refresh",
+        progress_label: "Step 2 of 6",
+        next_best_action: "Wait for your Initial Thread Draft to finish processing.",
+      };
+    case "round_in_progress":
+      return {
+        primary_action_label: "Answer Next Question",
+        progress_label: "Step 3 of 6",
+        next_best_action: "Answer one quick question to keep momentum.",
+      };
+    case "round_complete":
+      return {
+        primary_action_label: "Create Lab Brief Draft",
+        progress_label: "Step 4 of 6",
+        next_best_action: "Create your Lab Brief Draft from the completed round.",
+      };
+    case "brief_ready":
+      return {
+        primary_action_label: "Run Quality Check",
+        progress_label: "Step 5 of 6",
+        next_best_action: "Run quality check to confirm claim, value, and difference.",
+      };
+    case "ready_to_publish":
+      return {
+        primary_action_label: "Add to Lab Record",
+        progress_label: "Step 6 of 6",
+        next_best_action: "Confirm explicitly, then Add to Lab Record.",
+      };
+    case "published":
+      return {
+        primary_action_label: "Add Another Source",
+        progress_label: "Published",
+        next_best_action: "Published to Lab Record. Add another source to continue.",
+      };
+  }
+}
+
+function computeStage(input: {
   sourceExists: boolean;
   starterReady: boolean;
   activeRoundUnansweredCount: number;
   roundsCount: number;
   labBriefDraftExists: boolean;
+  readinessReady: boolean;
   published: boolean;
-}): string {
-  if (!workspace.sourceExists) {
-    return "Add one source URL and a short note to start the thread.";
+}): NonNullable<ThreadWorkspaceResponse["current_stage"]> {
+  if (input.published) {
+    return "published";
   }
-
-  if (!workspace.starterReady) {
-    return "Wait for the Initial Thread Draft to finish processing.";
+  if (!input.sourceExists) {
+    return "source_ready";
   }
-
-  if (workspace.activeRoundUnansweredCount > 0) {
-    return `Answer ${workspace.activeRoundUnansweredCount} remaining guided question(s).`;
+  if (!input.starterReady) {
+    return "draft_ready";
   }
-
-  if (workspace.roundsCount === 0) {
-    return "Start Guided Round 1 (5 quick questions).";
+  if (input.roundsCount === 0) {
+    return "round_in_progress";
   }
-
-  if (!workspace.labBriefDraftExists) {
-    return "Generate your Lab Brief proposal from this thread.";
+  if (input.activeRoundUnansweredCount > 0) {
+    return "round_in_progress";
   }
-
-  if (!workspace.published) {
-    return "Run readiness, confirm explicitly, then Add to Lab Record.";
+  if (input.roundsCount > 0 && !input.labBriefDraftExists) {
+    return "round_complete";
   }
-
-  return "Published to Lab Record. Add another source to continue.";
+  if (input.labBriefDraftExists && !input.readinessReady) {
+    return "brief_ready";
+  }
+  return "ready_to_publish";
 }
 
 async function buildThreadWorkspace(
@@ -345,22 +396,53 @@ async function buildThreadWorkspace(
 
   const source = sources[sources.length - 1];
   const starterBrief = briefs[briefs.length - 1];
-  const latestRound = rounds[rounds.length - 1];
-  const questionItems = latestRound ? await persistence.listGuidedQuestionItems(latestRound.round_id) : [];
-  const activeRoundUnansweredCount =
-    latestRound && latestRound.status === "active"
-      ? questionItems.filter((item) => !item.selected_option).length
-      : 0;
+  const activeRound = rounds.find((round) => round.status === "active");
+  const completedRounds = rounds.filter((round) => round.status === "completed");
+  const latestCompletedRound = completedRounds.length > 0 ? completedRounds[completedRounds.length - 1] : undefined;
 
-  const publishState: ThreadWorkspaceResponse["publish_state"] = labRecord.length > 0 ? "published" : "not_ready";
-  const nextBestAction = chooseNextBestAction({
+  const activeQuestionItems = activeRound ? await persistence.listGuidedQuestionItems(activeRound.round_id) : [];
+  const completedQuestionItems =
+    latestCompletedRound && latestCompletedRound.round_id === activeRound?.round_id
+      ? activeQuestionItems
+      : latestCompletedRound
+        ? await persistence.listGuidedQuestionItems(latestCompletedRound.round_id)
+        : [];
+  const nextQuestion = activeQuestionItems.find((item) => !item.selected_option);
+  const activeRoundUnansweredCount = nextQuestion
+    ? activeQuestionItems.filter((item) => !item.selected_option).length
+    : 0;
+  const completedRoundSummary = completedQuestionItems.length > 0 ? summarizeGuidedRound(completedQuestionItems) : null;
+
+  const readinessPreview =
+    completedRoundSummary
+      ? evaluateReadiness({
+          organization_id: input.organization_id,
+          cycle_id: input.cycle_id,
+          root_problem_version_id: thread.root_problem_version_id,
+          thread_id: input.thread_id,
+          claim: completedRoundSummary.readiness_signals.claim,
+          value: completedRoundSummary.readiness_signals.value,
+          difference: completedRoundSummary.readiness_signals.difference,
+          explicit_confirmation: false,
+        })
+      : undefined;
+
+  const publishState: ThreadWorkspaceResponse["publish_state"] =
+    labRecord.length > 0
+      ? "published"
+      : readinessPreview?.ready_to_publish
+        ? "ready_pending_confirmation"
+        : "not_ready";
+  const currentStage = computeStage({
     sourceExists: Boolean(source),
     starterReady: starterBrief?.status === "ready",
     activeRoundUnansweredCount,
     roundsCount: rounds.length,
     labBriefDraftExists: Boolean(labBriefDraft),
+    readinessReady: readinessPreview?.ready_to_publish === true,
     published: publishState === "published",
   });
+  const stage = stageLabels(currentStage);
 
   return {
     ok: true,
@@ -372,10 +454,22 @@ async function buildThreadWorkspace(
     source,
     starter_brief: starterBrief,
     rounds,
-    question_items: questionItems,
+    question_items: activeQuestionItems,
     lab_brief_draft: labBriefDraft,
+    readiness: readinessPreview,
     publish_state: publishState,
-    next_best_action: nextBestAction,
+    current_stage: currentStage,
+    primary_action_label: stage.primary_action_label,
+    progress_label: stage.progress_label,
+    next_question: nextQuestion
+      ? {
+          question_item_id: nextQuestion.question_item_id,
+          ordinal: nextQuestion.ordinal,
+          prompt: nextQuestion.prompt,
+          options: nextQuestion.options,
+        }
+      : undefined,
+    next_best_action: stage.next_best_action,
   };
 }
 
@@ -565,6 +659,129 @@ async function tryWriteNotionCardRecord(
       now,
     );
   }
+}
+
+async function tryInsertModelRun(
+  persistence: PersistenceAdapter,
+  input: {
+    organization_id: string;
+    cycle_id: string;
+    root_problem_version_id: string;
+    thread_id?: string;
+    participant_id?: string;
+    action_type: "guided_round" | "lab_brief_proposal";
+    metadata: PlannerRunMetadata;
+  },
+  now: () => string,
+): Promise<void> {
+  try {
+    await persistence.insertModelRun({
+      organization_id: input.organization_id,
+      cycle_id: input.cycle_id,
+      root_problem_version_id: input.root_problem_version_id,
+      thread_id: input.thread_id,
+      participant_id: input.participant_id,
+      action_type: input.action_type,
+      provider: input.metadata.provider,
+      model_name: input.metadata.model_name,
+      status: input.metadata.status,
+      prompt_contract_version: input.metadata.prompt_contract_version,
+      latency_ms: input.metadata.latency_ms,
+      estimated_cost_usd: input.metadata.estimated_cost_usd,
+      fallback_reason: input.metadata.fallback_reason,
+      created_at: now(),
+    });
+  } catch {
+    telemetryWriteFailedCount += 1;
+  }
+}
+
+async function startGuidedRoundIfEligible(
+  persistence: PersistenceAdapter,
+  config: RuntimeConfig,
+  input: {
+    organization_id: string;
+    cycle_id: string;
+    root_problem_version_id: string;
+    thread_id: string;
+    participant_id: string;
+  },
+  now: () => string,
+): Promise<
+  | { ok: true; reason_code: "ROUND_ALREADY_ACTIVE" | "ROUND_STARTED"; round: Awaited<ReturnType<PersistenceAdapter["createGuidedRound"]>>; items: Awaited<ReturnType<PersistenceAdapter["insertGuidedQuestionItems"]>> }
+  | { ok: false; reason_code: string; message?: string; max_rounds?: number }
+> {
+  const rounds = await persistence.listGuidedRoundsForThread(input.thread_id, input.cycle_id);
+  const active = rounds.find((round) => round.status === "active");
+  if (active) {
+    const items = await persistence.listGuidedQuestionItems(active.round_id);
+    return { ok: true, reason_code: "ROUND_ALREADY_ACTIVE", round: active, items };
+  }
+  if (rounds.length >= 3) {
+    return { ok: false, reason_code: "QUESTIONS_ROUND_LIMIT_REACHED", max_rounds: 3 };
+  }
+
+  const sources = await persistence.listSourcesForThread(input.thread_id, input.cycle_id);
+  const briefs = await persistence.listStarterBriefsForThread(input.thread_id, input.cycle_id);
+  const source = sources[sources.length - 1];
+  const starter = briefs[briefs.length - 1];
+  if (!source || !starter || starter.status !== "ready") {
+    return { ok: false, reason_code: "LAB_BRIEF_DRAFT_NOT_READY", message: "Starter draft not ready yet." };
+  }
+
+  const planner = await generateGuidedRoundWithProvider(
+    {
+      focus_snapshot: config.focus_snapshot,
+      source_url: source.raw_url,
+      source_takeaway: readString(starter.payload as Record<string, unknown>, "source_takeaway"),
+      combined_insight: readString(starter.payload as Record<string, unknown>, "combined_insight"),
+      tension_or_assumption: readString(starter.payload as Record<string, unknown>, "tension_or_assumption"),
+      next_best_move: readString(starter.payload as Record<string, unknown>, "next_best_move"),
+    },
+    config,
+  );
+
+  await tryInsertModelRun(
+    persistence,
+    {
+      organization_id: input.organization_id,
+      cycle_id: input.cycle_id,
+      root_problem_version_id: input.root_problem_version_id,
+      thread_id: input.thread_id,
+      participant_id: input.participant_id,
+      action_type: "guided_round",
+      metadata: planner.metadata,
+    },
+    now,
+  );
+
+  const round = await persistence.createGuidedRound({
+    thread_id: input.thread_id,
+    organization_id: input.organization_id,
+    cycle_id: input.cycle_id,
+    root_problem_version_id: input.root_problem_version_id,
+    participant_id: input.participant_id,
+    round_number: rounds.length + 1,
+    status: "active",
+    summary: undefined,
+  });
+
+  const items = await persistence.insertGuidedQuestionItems(
+    planner.payload.map((item) => ({
+      round_id: round.round_id,
+      thread_id: input.thread_id,
+      organization_id: input.organization_id,
+      cycle_id: input.cycle_id,
+      root_problem_version_id: input.root_problem_version_id,
+      participant_id: input.participant_id,
+      ordinal: item.ordinal,
+      prompt: item.prompt,
+      options: item.options,
+      recommended_option: item.recommended_option,
+    })),
+  );
+
+  return { ok: true, reason_code: "ROUND_STARTED", round, items };
 }
 
 export async function handleRequest(request: Request, deps: EdgeHandlerDeps = {}): Promise<Response> {
@@ -761,8 +978,233 @@ export async function handleRequest(request: Request, deps: EdgeHandlerDeps = {}
       cycle_id: cycleId,
       thread_id: threadId,
     });
+    const detailView = url.searchParams.get("view") === "details";
     const cardStack = mapWorkspaceToCardStack(workspace, config.focus_snapshot);
+    const simpleView = mapWorkspaceToStudentSimpleView(workspace, config.focus_snapshot);
+    const simpleStackHtml = renderCardsHtml({
+      status_chip: simpleView.status_chip,
+      status_label: simpleView.status_label,
+      next_best_action: simpleView.next_best_action,
+      cards: simpleView.cards,
+    });
     const unanswered = (workspace.question_items ?? []).filter((item) => !item.selected_option);
+    const readinessClaim = workspace.readiness?.passed_criteria.includes("claim") ?? false;
+    const readinessValue = workspace.readiness?.passed_criteria.includes("value") ?? false;
+    const readinessDifference = workspace.readiness?.passed_criteria.includes("difference") ?? false;
+    const stage = workspace.current_stage ?? "source_ready";
+    const detailsHref = `/thread?thread_id=${encodeURIComponent(threadId)}&cycle_id=${encodeURIComponent(cycleId)}&organization_id=${encodeURIComponent(
+      organizationId,
+    )}&view=details`;
+
+    if (!detailView) {
+      return html(
+        200,
+        `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Thread | Applied AI Labs</title>
+    <style>
+      :root { --ink: #1f2d56; --muted: #55617d; --bg: #f7f9fc; --card: #ffffff; --line: #dbe1ef; --ok:#1f7a4d; --warn:#ad7a00; --bad:#a33333; }
+      * { box-sizing: border-box; }
+      body { margin: 0; font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; background: linear-gradient(180deg, var(--bg), #eef3fb); color: var(--ink); }
+      main { max-width: 900px; margin: 0 auto; padding: 26px 18px 50px; }
+      .brand { margin: 0 0 12px; max-width: 280px; width: 100%; }
+      .status-callout, .card, .next-step { transition: transform 200ms ease, box-shadow 200ms ease; }
+      .status-callout:hover, .card:hover, .next-step:hover { transform: translateY(-1px); box-shadow: 0 8px 20px rgba(31,45,86,0.08); }
+      .status-callout { border-radius: 12px; border: 1px solid var(--line); background: #fff; padding: 12px 14px; margin-bottom: 12px; position: sticky; top: 10px; z-index: 1; }
+      .status-ready { border-color: #b8e5c8; background: #ecf8f1; }
+      .status-needs_refinement { border-color: #f0db8d; background: #fff7db; }
+      .status-blocked { border-color: #f5bcbc; background: #fdeeee; }
+      .card { background: #fff; border: 1px solid var(--line); border-radius: 12px; margin-bottom: 12px; padding: 14px; }
+      .card-head { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+      .card-head h2 { margin:0; font-size:20px; }
+      .chip { border-radius: 20px; padding: 4px 10px; font-size: 12px; text-transform: uppercase; border: 1px solid var(--line); }
+      .chip-ready { background:#ecf8f1; border-color:#b8e5c8; color:var(--ok); }
+      .chip-needs_refinement { background:#fff7db; border-color:#f0db8d; color:var(--warn); }
+      .chip-blocked { background:#fdeeee; border-color:#f5bcbc; color:var(--bad); }
+      .chip-info { background:#f2f5fb; border-color:#dbe1ef; color:var(--muted); }
+      p { margin: 6px 0; line-height:1.45; color: var(--muted); }
+      details { margin-top: 10px; }
+      summary { cursor: pointer; color: var(--ink); }
+      dt { font-weight: 600; margin-top: 6px; color: var(--ink); }
+      dd { margin: 2px 0 0 0; color: var(--muted); }
+      .next-step { background:#fff; border:1px solid var(--line); border-radius:12px; padding:14px; margin-top: 14px; }
+      .next-step h3 { margin: 0; font-size: 18px; }
+      .progress { color: var(--muted); font-size: 13px; margin-top: 6px; }
+      .row { display:flex; gap:8px; flex-wrap:wrap; margin-top: 10px; align-items: center; }
+      button, a.btn { border-radius:10px; padding: 9px 12px; border:1px solid var(--line); background:#fff; color:var(--ink); text-decoration:none; cursor:pointer; }
+      button.primary { background: var(--ink); color:#fff; border-color: var(--ink); }
+      .question { border: 1px dashed var(--line); border-radius: 10px; padding: 12px; margin-top: 10px; }
+      .status-msg { margin-top:10px; font-size:13px; color:var(--muted); }
+      .link { color: var(--ink); font-size: 13px; text-decoration: underline; }
+      @media (prefers-reduced-motion: reduce) { .status-callout, .card, .next-step { transition: none; } }
+    </style>
+  </head>
+  <body>
+    <main>
+      <img class="brand" src="/branding/applied-ai-labs-logo.svg" alt="Applied AI Labs logo" />
+      ${simpleStackHtml}
+      <section class="next-step">
+        <h3>One Next Step</h3>
+        <p class="progress">${escapeHtml(simpleView.progress_label ?? "Current step")}</p>
+        <p>${escapeHtml(simpleView.next_best_action)}</p>
+        ${
+          stage === "round_in_progress" && simpleView.next_question
+            ? `<div class="question">
+                <p><strong>Quick Question ${simpleView.next_question.ordinal} of 5</strong></p>
+                <p>${escapeHtml(simpleView.next_question.prompt)}</p>
+                <div class="row">
+                  ${simpleView.next_question.options
+                    .map(
+                      (opt) =>
+                        `<button class="answer-btn" data-qid="${escapeHtml(simpleView.next_question!.question_item_id)}" data-opt="${escapeHtml(
+                          opt.code,
+                        )}">${escapeHtml(opt.code)}: ${escapeHtml(opt.text)}</button>`,
+                    )
+                    .join("")}
+                </div>
+              </div>`
+            : ""
+        }
+        <div class="row">
+          ${
+            stage === "source_ready"
+              ? `<a class="btn primary" href="/submit?cycle_id=${encodeURIComponent(cycleId)}&organization_id=${encodeURIComponent(organizationId)}">Add a Source</a>`
+              : stage === "draft_ready"
+                ? `<button id="refresh" class="primary">${escapeHtml(simpleView.primary_action_label ?? "Refresh")}</button>`
+                : stage === "round_complete"
+                  ? `<button id="propose-brief" class="primary">${escapeHtml(simpleView.primary_action_label ?? "Create Lab Brief Draft")}</button>`
+                  : stage === "brief_ready"
+                    ? `<button id="quality-check" class="primary">${escapeHtml(simpleView.primary_action_label ?? "Run Quality Check")}</button>`
+                    : stage === "ready_to_publish"
+                      ? `<button id="publish" class="primary">${escapeHtml(simpleView.primary_action_label ?? "Add to Lab Record")}</button>`
+                      : stage === "published"
+                        ? `<a class="btn primary" href="/submit?cycle_id=${encodeURIComponent(cycleId)}&organization_id=${encodeURIComponent(
+                            organizationId,
+                          )}">Add Another Source</a>`
+                        : `<button id="start-round" class="primary">${escapeHtml(simpleView.primary_action_label ?? "Start Quick Questions")}</button>`
+          }
+          <a class="btn" href="/app?cycle_id=${encodeURIComponent(cycleId)}&organization_id=${encodeURIComponent(organizationId)}">Back to Lab Cards</a>
+        </div>
+        ${
+          stage === "ready_to_publish"
+            ? `<div class="row"><label><input type="checkbox" id="confirm" /> I confirm this is ready for Lab Record.</label></div>`
+            : ""
+        }
+        <div class="row"><a class="link" href="${detailsHref}">Show details</a></div>
+        <div id="status-msg" class="status-msg"></div>
+      </section>
+    </main>
+    <script>
+      const threadId = ${JSON.stringify(threadId)};
+      const cycleId = ${JSON.stringify(cycleId)};
+      const organizationId = ${JSON.stringify(organizationId)};
+      const stage = ${JSON.stringify(stage)};
+      const readinessSignals = {
+        claim: ${JSON.stringify(readinessClaim)},
+        value: ${JSON.stringify(readinessValue)},
+        difference: ${JSON.stringify(readinessDifference)},
+      };
+      const statusMsg = document.getElementById("status-msg");
+      const setStatus = (msg) => { if (statusMsg) statusMsg.textContent = msg; };
+      const requestId = () => ((globalThis.crypto && globalThis.crypto.randomUUID) ? globalThis.crypto.randomUUID() : String(Date.now()));
+
+      document.getElementById("refresh")?.addEventListener("click", () => globalThis.location.reload());
+
+      document.getElementById("start-round")?.addEventListener("click", async () => {
+        setStatus("Starting quick questions...");
+        const response = await fetch("/api/questions/round/start", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ thread_id: threadId, cycle_id: cycleId, organization_id: organizationId, client_request_id: requestId() }),
+        });
+        const body = await response.json();
+        setStatus(response.ok ? "Quick questions ready." : "Blocked: " + (body.reason_code || "UNKNOWN"));
+        if (response.ok) globalThis.location.reload();
+      });
+
+      document.querySelectorAll(".answer-btn").forEach((button) => {
+        button.addEventListener("click", async () => {
+          const qid = button.getAttribute("data-qid");
+          const opt = button.getAttribute("data-opt");
+          setStatus("Saving answer...");
+          const response = await fetch("/api/questions/answer", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify({ thread_id: threadId, cycle_id: cycleId, organization_id: organizationId, question_item_id: qid, selected_option: opt, client_request_id: requestId() }),
+          });
+          const body = await response.json();
+          setStatus(response.ok ? "Answer saved." : "Blocked: " + (body.reason_code || "UNKNOWN"));
+          if (response.ok) globalThis.location.reload();
+        });
+      });
+
+      document.getElementById("propose-brief")?.addEventListener("click", async () => {
+        setStatus("Creating Lab Brief Draft...");
+        const response = await fetch("/api/lab-brief/propose", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ thread_id: threadId, cycle_id: cycleId, organization_id: organizationId, client_request_id: requestId() }),
+        });
+        const body = await response.json();
+        setStatus(response.ok ? "Lab Brief Draft ready." : "Blocked: " + (body.reason_code || "UNKNOWN"));
+        if (response.ok) globalThis.location.reload();
+      });
+
+      document.getElementById("quality-check")?.addEventListener("click", async () => {
+        setStatus("Running quality check...");
+        const response = await fetch("/api/actions/readiness/evaluate", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({
+            thread_id: threadId,
+            cycle_id: cycleId,
+            organization_id: organizationId,
+            claim: readinessSignals.claim,
+            value: readinessSignals.value,
+            difference: readinessSignals.difference,
+            explicit_confirmation: false,
+            client_request_id: requestId(),
+          }),
+        });
+        const body = await response.json();
+        setStatus(response.ok ? "Quality check: " + body.reason_code : "Blocked: " + (body.reason_code || "UNKNOWN"));
+        if (response.ok) globalThis.location.reload();
+      });
+
+      document.getElementById("publish")?.addEventListener("click", async () => {
+        const explicitConfirmation = document.getElementById("confirm")?.checked === true;
+        setStatus("Publishing...");
+        const response = await fetch("/api/actions/publish", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({
+            thread_id: threadId,
+            cycle_id: cycleId,
+            organization_id: organizationId,
+            claim: readinessSignals.claim,
+            value: readinessSignals.value,
+            difference: readinessSignals.difference,
+            explicit_confirmation: explicitConfirmation,
+            client_request_id: requestId(),
+          }),
+        });
+        const body = await response.json();
+        setStatus(response.ok ? "Added to Lab Record." : "Blocked: " + (body.reason_code || "UNKNOWN"));
+        if (response.ok) globalThis.location.reload();
+      });
+    </script>
+  </body>
+</html>`,
+      );
+    }
 
     return html(
       200,
@@ -1382,12 +1824,34 @@ export async function handleRequest(request: Request, deps: EdgeHandlerDeps = {}
     };
 
     if (response.thread_id) {
-      const workspace = await buildThreadWorkspace(persistence, config, {
+      let workspace = await buildThreadWorkspace(persistence, config, {
         organization_id: organizationId,
         cycle_id: cycleId,
         thread_id: response.thread_id,
       });
       if (workspace.ok) {
+        if ((workspace.rounds?.length ?? 0) === 0 && workspace.starter_brief?.status === "ready") {
+          const started = await startGuidedRoundIfEligible(
+            persistence,
+            config,
+            {
+              organization_id: organizationId,
+              cycle_id: cycleId,
+              root_problem_version_id: config.root_problem_version_id,
+              thread_id: response.thread_id,
+              participant_id: participant.participant_id,
+            },
+            now,
+          );
+          if (started.ok) {
+            workspace = await buildThreadWorkspace(persistence, config, {
+              organization_id: organizationId,
+              cycle_id: cycleId,
+              thread_id: response.thread_id,
+            });
+          }
+        }
+
         await tryWriteNotionCardRecord(
           persistence,
           config,
@@ -1736,61 +2200,22 @@ export async function handleRequest(request: Request, deps: EdgeHandlerDeps = {}
       return mutationScope.response;
     }
     const { cycle_id: cycleId, thread_id: threadId, context, guard } = mutationScope;
-
-    const rounds = await persistence.listGuidedRoundsForThread(threadId, cycleId);
-    const active = rounds.find((round) => round.status === "active");
-    if (active) {
-      const items = await persistence.listGuidedQuestionItems(active.round_id);
-      return json(200, { ok: true, reason_code: "ROUND_ALREADY_ACTIVE", round: active, items });
-    }
-    if (rounds.length >= 3) {
-      return json(400, { ok: false, reason_code: "QUESTIONS_ROUND_LIMIT_REACHED", max_rounds: 3 });
-    }
-
-    const sources = await persistence.listSourcesForThread(threadId, cycleId);
-    const briefs = await persistence.listStarterBriefsForThread(threadId, cycleId);
-    const source = sources[sources.length - 1];
-    const starter = briefs[briefs.length - 1];
-    if (!source || !starter || starter.status !== "ready") {
-      return json(400, { ok: false, reason_code: "LAB_BRIEF_DRAFT_NOT_READY", message: "Starter draft not ready yet." });
-    }
-
-    const generated = generateGuidedRoundQuestions({
-      focus_snapshot: config.focus_snapshot,
-      source_url: source.raw_url,
-      source_takeaway: readString(starter.payload as Record<string, unknown>, "source_takeaway"),
-      combined_insight: readString(starter.payload as Record<string, unknown>, "combined_insight"),
-      tension_or_assumption: readString(starter.payload as Record<string, unknown>, "tension_or_assumption"),
-      next_best_move: readString(starter.payload as Record<string, unknown>, "next_best_move"),
-    });
-
-    const round = await persistence.createGuidedRound({
-      thread_id: threadId,
-      organization_id: context.organization_id,
-      cycle_id: cycleId,
-      root_problem_version_id: context.root_problem_version_id,
-      participant_id: guard.decision.participant_id!,
-      round_number: rounds.length + 1,
-      status: "active",
-      summary: undefined,
-    });
-
-    const items = await persistence.insertGuidedQuestionItems(
-      generated.map((item) => ({
-        round_id: round.round_id,
-        thread_id: threadId,
+    const started = await startGuidedRoundIfEligible(
+      persistence,
+      config,
+      {
         organization_id: context.organization_id,
         cycle_id: cycleId,
         root_problem_version_id: context.root_problem_version_id,
+        thread_id: threadId,
         participant_id: guard.decision.participant_id!,
-        ordinal: item.ordinal,
-        prompt: item.prompt,
-        options: item.options,
-        recommended_option: item.recommended_option,
-      })),
+      },
+      now,
     );
-
-    return json(200, { ok: true, reason_code: "ROUND_STARTED", round, items });
+    if (!started.ok) {
+      return json(400, started);
+    }
+    return json(200, started);
   }
 
   if (request.method === "POST" && url.pathname === "/api/questions/answer") {
@@ -1925,13 +2350,32 @@ export async function handleRequest(request: Request, deps: EdgeHandlerDeps = {}
       return json(400, { ok: false, reason_code: "LAB_BRIEF_DRAFT_NOT_READY", message: "Starter draft is not ready." });
     }
 
-    const draft = proposeLabBriefFromThread({
-      focus_snapshot: config.focus_snapshot,
-      source_url: source.raw_url,
-      relevance_note: source.relevance_note,
-      starter_brief: starter,
-      round_summary: completedRounds[completedRounds.length - 1]?.summary,
-    });
+    const planned = await proposeLabBriefWithProvider(
+      {
+        focus_snapshot: config.focus_snapshot,
+        source_url: source.raw_url,
+        relevance_note: source.relevance_note,
+        starter_brief: starter,
+        round_summary: completedRounds[completedRounds.length - 1]?.summary,
+      },
+      config,
+    );
+
+    await tryInsertModelRun(
+      persistence,
+      {
+        organization_id: context.organization_id,
+        cycle_id: cycleId,
+        root_problem_version_id: context.root_problem_version_id,
+        thread_id: threadId,
+        participant_id: guard.decision.participant_id,
+        action_type: "lab_brief_proposal",
+        metadata: planned.metadata,
+      },
+      now,
+    );
+
+    const draft = planned.payload;
 
     const saved = await persistence.upsertLabBriefDraft({
       thread_id: threadId,
@@ -2048,7 +2492,7 @@ export async function handleRequest(request: Request, deps: EdgeHandlerDeps = {}
     }
 
     const cycleId = requestContext.cycle_id!;
-    const [memberships, ingest, audits, sources, starterDrafts, rounds, briefDrafts] = await Promise.all([
+    const [memberships, ingest, audits, sources, starterDrafts, rounds, briefDrafts, modelRuns] = await Promise.all([
       persistence.listCycleMemberships(requestContext.organization_id, cycleId),
       persistence.listIngestForCycle(requestContext.organization_id, cycleId, 200),
       persistence.listProtectedActionAuditsForCycle(requestContext.organization_id, cycleId, 200),
@@ -2056,6 +2500,7 @@ export async function handleRequest(request: Request, deps: EdgeHandlerDeps = {}
       persistence.listStarterBriefsForCycle(cycleId),
       persistence.listGuidedRoundsForCycle(cycleId),
       persistence.listLabBriefDraftsForCycle(cycleId),
+      persistence.listModelRunsForCycle(requestContext.organization_id, cycleId, 200),
     ]);
 
     const ingestCounts: Record<string, number> = {
@@ -2078,6 +2523,25 @@ export async function handleRequest(request: Request, deps: EdgeHandlerDeps = {}
       }
     }
 
+    const plannerProviderCounts: Record<string, number> = {};
+    let plannerFallbackTotal = 0;
+    let plannerRateLimitedTotal = 0;
+    let plannerLatencyTotal = 0;
+    let plannerCostTotal = 0;
+    for (const row of modelRuns) {
+      plannerProviderCounts[row.provider] = (plannerProviderCounts[row.provider] ?? 0) + 1;
+      plannerLatencyTotal += row.latency_ms;
+      if (typeof row.estimated_cost_usd === "number") {
+        plannerCostTotal += row.estimated_cost_usd;
+      }
+      if (row.status === "fallback") {
+        plannerFallbackTotal += 1;
+      }
+      if (row.fallback_reason === "RATE_LIMIT") {
+        plannerRateLimitedTotal += 1;
+      }
+    }
+
     const summary: OperatorSummaryResponse = {
       ok: true,
       reason_code: "OK",
@@ -2095,6 +2559,13 @@ export async function handleRequest(request: Request, deps: EdgeHandlerDeps = {}
       starter_drafts_ready_total: starterDrafts.filter((row) => row.status === "ready").length,
       rounds_completed_total: rounds.filter((row) => row.status === "completed").length,
       lab_brief_drafts_total: briefDrafts.length,
+      planner_runs_total: modelRuns.length,
+      planner_fallback_total: plannerFallbackTotal,
+      planner_rate_limited_total: plannerRateLimitedTotal,
+      planner_avg_latency_ms: modelRuns.length > 0 ? Math.round(plannerLatencyTotal / modelRuns.length) : 0,
+      planner_estimated_cost_usd: Number(plannerCostTotal.toFixed(6)),
+      planner_provider_counts: plannerProviderCounts,
+      telemetry_write_failed_count: telemetryWriteFailedCount,
     };
 
     return json(200, {
@@ -2239,6 +2710,15 @@ export async function handleRequest(request: Request, deps: EdgeHandlerDeps = {}
     const payload = asObject(await parseJsonBody(request));
     if (!payload.cycle_id) {
       payload.cycle_id = request.headers.get("x-cycle-id") ?? undefined;
+    }
+    const requestContext = await resolveRequestContext(payload, request, config);
+    const operatorContext = await resolveOperatorContext(persistence, config, requestContext);
+    if (!operatorContext.ok) {
+      const status = operatorContext.reason_code === "CYCLE_NOT_SELECTED" ? 400 : 403;
+      return json(status, {
+        ok: false,
+        reason_code: operatorContext.reason_code,
+      });
     }
     if (!payload.idempotency_key) {
       payload.idempotency_key = `backfill:${Date.now()}`;

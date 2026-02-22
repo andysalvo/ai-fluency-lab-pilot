@@ -6,6 +6,7 @@ import type {
   IngestRecord,
   IngestState,
   LabRecordEntry,
+  ModelRunRecord,
   LabBriefDraftRecord,
   ParticipantRecord,
   PublishTxnInput,
@@ -169,6 +170,12 @@ export interface PersistenceAdapter {
   ): Promise<LabBriefDraftRecord>;
 
   listLabBriefDraftsForCycle(cycleId: string): Promise<LabBriefDraftRecord[]>;
+
+  insertModelRun(
+    record: Omit<ModelRunRecord, "run_id" | "created_at"> & { run_id?: string; created_at?: string },
+  ): Promise<ModelRunRecord>;
+
+  listModelRunsForCycle(organizationId: string, cycleId: string, limit?: number): Promise<ModelRunRecord[]>;
 
   listCycleMemberships(organizationId: string, cycleId: string): Promise<CycleMembershipRecord[]>;
 

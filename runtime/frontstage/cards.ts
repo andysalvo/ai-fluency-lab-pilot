@@ -2,6 +2,7 @@ import type {
   CardStackViewModel,
   CardStatusChip,
   CardViewModel,
+  GuidedQuestionOption,
   StarterBriefRecord,
   ThreadWorkspaceResponse,
 } from "../core/types.js";
@@ -290,6 +291,65 @@ export function mapWorkspaceToCardStack(workspace: ThreadWorkspaceResponse, focu
     status_label: statusLabel(status_chip),
     next_best_action: workspace.next_best_action,
     cards,
+  };
+}
+
+export interface StudentSimpleViewModel {
+  status_chip: CardStatusChip;
+  status_label: string;
+  next_best_action: string;
+  current_stage?: ThreadWorkspaceResponse["current_stage"];
+  primary_action_label?: string;
+  progress_label?: string;
+  cards: CardViewModel[];
+  next_question?: {
+    question_item_id: string;
+    ordinal: number;
+    prompt: string;
+    options: GuidedQuestionOption[];
+  };
+}
+
+function selectCardIdsByStage(stage: ThreadWorkspaceResponse["current_stage"]): string[] {
+  switch (stage) {
+    case "source_ready":
+      return ["focus", "source"];
+    case "draft_ready":
+      return ["focus", "source", "initial-thread-draft"];
+    case "round_in_progress":
+      return ["focus", "source", "initial-thread-draft", "agentic-guidance"];
+    case "round_complete":
+      return ["focus", "initial-thread-draft", "guided-rounds", "agentic-guidance"];
+    case "brief_ready":
+      return ["focus", "lab-brief", "agentic-guidance"];
+    case "ready_to_publish":
+      return ["focus", "lab-brief", "agentic-guidance"];
+    case "published":
+      return ["focus", "lab-brief"];
+    default:
+      return ["focus", "source", "initial-thread-draft"];
+  }
+}
+
+export function mapWorkspaceToStudentSimpleView(
+  workspace: ThreadWorkspaceResponse,
+  focusSnapshot: string,
+): StudentSimpleViewModel {
+  const stack = mapWorkspaceToCardStack(workspace, focusSnapshot);
+  const cardsById = new Map(stack.cards.map((card) => [card.id, card]));
+  const ordered = selectCardIdsByStage(workspace.current_stage)
+    .map((id) => cardsById.get(id))
+    .filter((card): card is CardViewModel => Boolean(card));
+
+  return {
+    status_chip: stack.status_chip,
+    status_label: stack.status_label,
+    next_best_action: stack.next_best_action,
+    current_stage: workspace.current_stage,
+    primary_action_label: workspace.primary_action_label,
+    progress_label: workspace.progress_label,
+    cards: ordered.length > 0 ? ordered : stack.cards.slice(0, 3),
+    next_question: workspace.next_question,
   };
 }
 

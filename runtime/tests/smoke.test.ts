@@ -1034,8 +1034,21 @@ test("demo path smoke: source to publish renders thread cards with 200", async (
   );
   assert.equal(threadPage.status, 200);
   const html = await threadPage.text();
-  assert.equal(html.includes("Initial Thread Draft"), true);
-  assert.equal(html.includes("Guided Rounds"), true);
+  assert.equal(html.includes("One Next Step"), true);
   assert.equal(html.includes("Lab Brief"), true);
   assert.equal(html.includes("Details"), true);
+
+  const detailThreadPage = await handleRequest(
+    new Request(`http://localhost/thread?thread_id=${encodeURIComponent(threadId)}&cycle_id=cycle-001&view=details`, {
+      method: "GET",
+      headers: {
+        cookie: cookiePair,
+      },
+    }),
+    deps,
+  );
+  assert.equal(detailThreadPage.status, 200);
+  const detailHtml = await detailThreadPage.text();
+  assert.equal(detailHtml.includes("Initial Thread Draft"), true);
+  assert.equal(detailHtml.includes("Guided Rounds"), true);
 });

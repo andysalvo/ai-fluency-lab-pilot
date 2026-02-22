@@ -30,6 +30,8 @@ Use Notion + Supabase + Vercel to run a cycle-scoped, safe, agentic collaboratio
 - Decision: thread mutation endpoints (`/api/questions/round/start`, `/api/questions/answer`, `/api/lab-brief/propose`) now resolve through one orchestration guard path in `edge-entry.ts`.
 - Decision: readiness logic is computed by `evaluateReadiness` only; guided-round logic now emits signals and defers reason-code evaluation to the canonical readiness module.
 - Decision: Notion write-back is deterministic and best-effort idempotent (idempotency key lookup when available, title fallback) with non-blocking failure logging.
+- Decision: Kimi planner routing is optional and env-gated (`PILOT_USE_KIMI_PLANNER=true`) for guided rounds + lab brief proposal only; default behavior stays deterministic/OpenAI path.
+- Decision: planner telemetry (`model_runs`) is strictly non-blocking and uses contracted status + fallback reasons only (`success|fallback` with `TIMEOUT|RATE_LIMIT|SCHEMA|CAPACITY`).
 
 ## Alternatives Rejected
 - Rejected: default to "current cycle" from config.
