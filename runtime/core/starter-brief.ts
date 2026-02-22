@@ -1,12 +1,14 @@
 import type { RuntimeConfig } from "../adapters/env.js";
+import { STARTER_DRAFT_PROMPT_CONTRACT_VERSION, generateStarterDraftWithProvider } from "./planner-provider.js";
 import type { InitialThreadDraftContent } from "./types.js";
 
 export const LOCKED_REASONING_MODEL = "gpt-4.1";
 export const LOCKED_REASONING_TEMPERATURE = 0;
 export const LOCKED_REASONING_TOP_P = 1;
-export const INITIAL_THREAD_DRAFT_PROMPT_CONTRACT_VERSION = "initial_thread_draft_v1";
+export const INITIAL_THREAD_DRAFT_PROMPT_CONTRACT_VERSION = STARTER_DRAFT_PROMPT_CONTRACT_VERSION;
 export const LAB_RECORD_PROMPT_CONTRACT_VERSION = "lab_record_v1";
 export const APPROVED_GOLDEN_EXAMPLE_ID = "smu_ai_edu_A";
+const MAX_SENTENCE_WORDS = 22;
 
 const INITIAL_THREAD_REQUIRED_FIELDS = [
   "source_takeaway",
@@ -31,15 +33,27 @@ function truncate(value: string, maxLength: number): string {
   return `${normalized.slice(0, Math.max(1, maxLength - 1))}…`;
 }
 
-function capSentences(value: string, maxSentences: number, maxLength: number): string {
-  const collapsed = value.replace(/\s+/g, " ").trim();
-  if (!collapsed) {
+function capWords(value: string, maxWords: number): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (!normalized) {
     return "";
   }
+  const words = normalized.split(" ");
+  if (words.length <= maxWords) {
+    return normalized;
+  }
+  return words.slice(0, maxWords).join(" ");
+}
 
-  const parts = collapsed.split(/(?<=[.!?])\s+/).filter((item) => item.trim().length > 0);
-  const selected = (parts.length > 0 ? parts.slice(0, maxSentences) : [collapsed]).join(" ");
-  return truncate(selected, maxLength);
+function toSentence(value: string, fallbackText: string, maxLength: number): string {
+  const collapsed = value.replace(/\s+/g, " ").trim();
+  if (!collapsed) {
+    return fallbackText;
+  }
+  const first = collapsed.split(/(?<=[.!?])\s+/)[0] ?? collapsed;
+  const words = capWords(first, MAX_SENTENCE_WORDS);
+  const withPunctuation = /[.!?]$/.test(words) ? words : `${words}.`;
+  return truncate(withPunctuation, maxLength);
 }
 
 function stripHtml(input: string): string {
@@ -84,47 +98,45 @@ function deterministicNormalizeDraft(input: {
   combined_insight?: string;
   tension_or_assumption?: string;
   next_best_move?: string;
-  provenance?: string;
   url: string;
   relevance_note: string;
   focus_snapshot: string;
+  model_name?: string;
+  prompt_contract_version?: string;
+  golden_example_id?: string;
 }): InitialThreadDraftContent {
   const note = input.relevance_note.trim();
-  const focus = input.focus_snapshot.trim();
+  const focus = truncate(input.focus_snapshot.trim(), 220);
   const fallbackSourceTakeaway =
-    note.length > 0
-      ? `The source appears relevant to the focus because it connects to this note: ${truncate(note, 220)}`
-      : "The source appears relevant to the focus, but the note did not provide enough detail yet.";
+    note.length > 0 ? `Source signal: ${truncate(note, 220)}` : "Source signal: this article links to the focus but needs a clearer note.";
   const fallbackStudentTakeaway =
-    note.length > 0
-      ? `The student note suggests this angle: ${truncate(note, 220)}`
-      : "The student note is too brief to establish a strong position yet.";
+    note.length > 0 ? `Student pattern: ${truncate(note, 220)}` : "Student pattern: the note is too short to show a clear direction yet.";
 
   return {
-    source_takeaway: capSentences(input.source_takeaway ?? fallbackSourceTakeaway, 2, 340),
-    student_note_takeaway: capSentences(input.student_note_takeaway ?? fallbackStudentTakeaway, 2, 320),
-    combined_insight: capSentences(
+    source_takeaway: toSentence(input.source_takeaway ?? fallbackSourceTakeaway, fallbackSourceTakeaway, 260),
+    student_note_takeaway: toSentence(input.student_note_takeaway ?? fallbackStudentTakeaway, fallbackStudentTakeaway, 260),
+    combined_insight: toSentence(
       input.combined_insight ??
-        `A stronger fluency approach should connect this source to repeatable student reasoning habits around the focus: ${truncate(focus, 200)}`,
-      2,
-      360,
+        `Core idea: connect source reading to repeatable reasoning habits around this focus: ${focus}`,
+      "Core idea: connect source reading to repeatable reasoning habits around this focus.",
+      260,
     ),
-    tension_or_assumption: capSentences(
+    tension_or_assumption: toSentence(
       input.tension_or_assumption ??
-        "A likely assumption is that tool access alone creates fluency, when sustained fluency requires repeated critical thinking practice.",
-      2,
-      340,
+        "Key tension: easy AI answers can replace real thinking unless classes require evidence, reflection, and clear feedback loops.",
+      "Key tension: easy AI answers can replace real thinking unless classes require evidence and reflection.",
+      260,
     ),
-    next_best_move: capSentences(
+    next_best_move: toSentence(
       input.next_best_move ??
-        "Define one measurable student behavior that would show stronger fluency after this source is discussed and refined.",
-      2,
-      320,
+        "Cohort question: which class routine best helps students use AI for stronger reasoning, not shortcuts?",
+      "Cohort question: which class routine best helps students use AI for stronger reasoning?",
+      260,
     ),
     provenance: `Built only from: ${input.url}`,
-    golden_example_id: APPROVED_GOLDEN_EXAMPLE_ID,
-    prompt_contract_version: INITIAL_THREAD_DRAFT_PROMPT_CONTRACT_VERSION,
-    model_name: LOCKED_REASONING_MODEL,
+    golden_example_id: input.golden_example_id ?? APPROVED_GOLDEN_EXAMPLE_ID,
+    prompt_contract_version: input.prompt_contract_version ?? INITIAL_THREAD_DRAFT_PROMPT_CONTRACT_VERSION,
+    model_name: input.model_name ?? LOCKED_REASONING_MODEL,
   };
 }
 
@@ -168,12 +180,13 @@ async function generateWithOpenAI(args: {
 }): Promise<InitialThreadDraftContent | null> {
   const prompt = [
     "You produce one Initial Thread Draft in strict JSON.",
-    "Use plain language suitable for first-year college students.",
+    "Use plain language for 17-21 college students.",
+    "Tone: focus-group consultant summary, practical and non-jargon.",
     "Ground output only in the source text and student note.",
     "Return only JSON with keys:",
     "source_takeaway, student_note_takeaway, combined_insight, tension_or_assumption, next_best_move",
     "Constraints:",
-    "- each field should be concise and practical",
+    "- each field should be one sentence with 22 words or fewer",
     "- no markdown",
     "- no extra keys",
     `Focus: ${args.focusSnapshot}`,
@@ -221,7 +234,6 @@ async function generateWithOpenAI(args: {
       combined_insight: readStringField(parsed, "combined_insight"),
       tension_or_assumption: readStringField(parsed, "tension_or_assumption"),
       next_best_move: readStringField(parsed, "next_best_move"),
-      provenance: readStringField(parsed, "provenance"),
       url: args.url,
       relevance_note: args.relevanceNote,
       focus_snapshot: args.focusSnapshot,
@@ -272,15 +284,77 @@ export async function generateStarterBrief(input: StarterBriefInput): Promise<St
     };
   }
 
+  const deterministicFromSource = deterministicNormalizeDraft({
+    source_takeaway: fetched,
+    url: input.url,
+    relevance_note: input.relevance_note,
+    focus_snapshot: input.focus_snapshot,
+  });
+
+  if (input.config.use_kimi_planner) {
+    const planner = await generateStarterDraftWithProvider(
+      {
+        focus_snapshot: input.focus_snapshot,
+        source_url: input.url,
+        relevance_note: input.relevance_note,
+        source_excerpt: fetched,
+        deterministic: {
+          source_takeaway: deterministicFromSource.source_takeaway,
+          student_note_takeaway: deterministicFromSource.student_note_takeaway,
+          combined_insight: deterministicFromSource.combined_insight,
+          tension_or_assumption: deterministicFromSource.tension_or_assumption,
+          next_best_move: deterministicFromSource.next_best_move,
+        },
+      },
+      input.config,
+    );
+
+    const payload = deterministicNormalizeDraft({
+      source_takeaway: planner.payload.source_takeaway,
+      student_note_takeaway: planner.payload.student_note_takeaway,
+      combined_insight: planner.payload.combined_insight,
+      tension_or_assumption: planner.payload.tension_or_assumption,
+      next_best_move: planner.payload.next_best_move,
+      url: input.url,
+      relevance_note: input.relevance_note,
+      focus_snapshot: input.focus_snapshot,
+      model_name: planner.metadata.model_name,
+      prompt_contract_version: planner.metadata.prompt_contract_version,
+    });
+
+    const generationMode =
+      planner.metadata.provider === "kimi" && planner.metadata.status === "success"
+        ? "kimi"
+        : planner.metadata.status === "fallback"
+          ? `fallback_${String(planner.metadata.fallback_reason ?? "capacity").toLowerCase()}`
+          : "deterministic";
+
+    return {
+      status: "ready",
+      payload,
+      replay_payload: {
+        generation_mode: generationMode,
+        fetch_status: "ok",
+        source_url: input.url,
+        used_excerpt: Boolean(excerpt),
+        planner_provider: planner.metadata.provider,
+        planner_status: planner.metadata.status,
+        fallback_reason: planner.metadata.fallback_reason,
+        latency_ms: planner.metadata.latency_ms,
+        estimated_cost_usd: planner.metadata.estimated_cost_usd,
+        golden_example_id: payload.golden_example_id,
+        prompt_contract_version: payload.prompt_contract_version,
+        model_name: payload.model_name,
+        temperature: LOCKED_REASONING_TEMPERATURE,
+        top_p: LOCKED_REASONING_TOP_P,
+      },
+    };
+  }
+
   if (!input.config.openai_api_key) {
     return {
       status: "ready",
-      payload: deterministicNormalizeDraft({
-        source_takeaway: fetched,
-        url: input.url,
-        relevance_note: input.relevance_note,
-        focus_snapshot: input.focus_snapshot,
-      }),
+      payload: deterministicFromSource,
       replay_payload: {
         generation_mode: "fallback_no_openai",
         fetch_status: "ok",
@@ -306,12 +380,7 @@ export async function generateStarterBrief(input: StarterBriefInput): Promise<St
   if (!generated) {
     return {
       status: "ready",
-      payload: deterministicNormalizeDraft({
-        source_takeaway: fetched,
-        url: input.url,
-        relevance_note: input.relevance_note,
-        focus_snapshot: input.focus_snapshot,
-      }),
+      payload: deterministicFromSource,
       replay_payload: {
         generation_mode: "fallback_on_model_error",
         fetch_status: "ok",

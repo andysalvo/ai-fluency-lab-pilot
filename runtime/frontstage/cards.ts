@@ -8,9 +8,32 @@ import type {
 } from "../core/types.js";
 
 const STUDENT_FOCUS_LINE = "How can students stay fluent with AI as tools and norms keep changing?";
+const MAX_SENTENCE_WORDS = 22;
 
 function asString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function capWords(value: string, maxWords: number): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return "";
+  }
+  const words = normalized.split(" ");
+  if (words.length <= maxWords) {
+    return normalized;
+  }
+  return words.slice(0, maxWords).join(" ");
+}
+
+function toSentence(value: string, fallback: string): string {
+  const candidate = (value || fallback).replace(/\s+/g, " ").trim();
+  const first = candidate.split(/(?<=[.!?])\s+/)[0] ?? candidate;
+  const capped = capWords(first, MAX_SENTENCE_WORDS);
+  if (!capped) {
+    return fallback;
+  }
+  return /[.!?]$/.test(capped) ? capped : `${capped}.`;
 }
 
 function addIfPresent(lines: string[], label: string, value: unknown): void {
@@ -66,7 +89,7 @@ function statusLabel(statusChip: CardStatusChip): string {
   }
 
   if (statusChip === "needs_refinement") {
-    return "⚠ Needs refinement";
+    return "⚠ Needs one more pass";
   }
 
   return "ℹ In progress";
@@ -74,22 +97,22 @@ function statusLabel(statusChip: CardStatusChip): string {
 
 function readinessMissingText(reasonCode: string | undefined): string {
   if (!reasonCode) {
-    return "Run readiness check to see what is still missing.";
+    return "Run quality check to see what is missing.";
   }
 
   if (reasonCode === "NEEDS_CONFIRMATION") {
-    return "All criteria are met; explicit confirmation is still required.";
+    return "Criteria are met; explicit confirmation is still required.";
   }
 
   if (reasonCode === "INSUFFICIENT_CRITERIA") {
-    return "At least one criterion (claim/value/difference) is still missing.";
+    return "At least one core criterion is still missing.";
   }
 
   if (reasonCode === "INSUFFICIENT_CRITERIA_AND_CONFIRMATION") {
-    return "Criteria and confirmation are both incomplete.";
+    return "Core criteria and confirmation are both incomplete.";
   }
 
-  return `Current readiness reason: ${reasonCode}.`;
+  return `Current quality-check reason: ${reasonCode}.`;
 }
 
 function buildFocusCard(workspace: ThreadWorkspaceResponse, focusSnapshot: string): CardViewModel {
@@ -178,32 +201,43 @@ function buildDraftCard(workspace: ThreadWorkspaceResponse): CardViewModel {
   };
 }
 
-function deriveExperiment(nextBestMove: string): string {
-  if (/experiment|test|pilot|measure|trial/i.test(nextBestMove)) {
-    return nextBestMove;
-  }
-
-  return "Define one test, one measurable signal, and one expected change if your claim is correct.";
+function asQuestion(value: string, fallback: string): string {
+  const sentence = toSentence(value, fallback).replace(/[.!]$/, "");
+  return sentence.endsWith("?") ? sentence : `${sentence}?`;
 }
 
 function buildAgenticGuidanceCard(workspace: ThreadWorkspaceResponse): CardViewModel {
   const starterPayload = toStarter(workspace.starter_brief);
-  const tension = asString(starterPayload.tension_or_assumption) ?? "No tension noted yet.";
-  const nextBestMove = asString(starterPayload.next_best_move) ?? "No next move proposed yet.";
+  const combinedInsight =
+    asString(starterPayload.combined_insight) ?? "Build a repeatable routine where students connect AI use to evidence and reasoning.";
+  const studentPattern =
+    workspace.source?.relevance_note ?? "Students often move fast with AI tools and skip the deeper reasoning step.";
+  const tension =
+    asString(starterPayload.tension_or_assumption) ??
+    "Speed and convenience can overpower learning depth unless structure and feedback are built into the process.";
+  const nextBestMove =
+    asString(starterPayload.next_best_move) ??
+    "Which class routine helps students use AI for stronger judgment over time";
   const readinessReason = workspace.readiness?.reason_code;
+  const strategicImplication = workspace.readiness?.ready_to_publish
+    ? "Strategic implication: this thread is strong enough to move into the Lab Record after explicit confirmation."
+    : "Strategic implication: this thread needs one more pass before it is strong enough for the Lab Record.";
 
   return {
     id: "agentic-guidance",
-    title: "What’s Missing / What Would Change My Mind",
+    title: "5-Sentence Insight Card",
     status_chip: workspace.readiness?.ready_to_publish ? "ready" : "needs_refinement",
     body_blocks: [
-      readinessMissingText(readinessReason),
-      `What would change my mind: ${tension}`,
-      `Proposed experiment: ${deriveExperiment(nextBestMove)}`,
+      `Core idea: ${toSentence(combinedInsight, "Build a repeatable AI fluency routine grounded in evidence.")}`,
+      `Student pattern: ${toSentence(studentPattern, "Students move quickly with AI and need clearer reasoning structure.")}`,
+      `Key tension: ${toSentence(tension, "AI speed can conflict with learning depth if classes skip reflection.")}`,
+      toSentence(strategicImplication, strategicImplication),
+      `Cohort question: ${asQuestion(nextBestMove, "What routine should our cohort test to improve AI fluency next week")}`,
     ],
+    details: [{ key: "quality_check", value: readinessMissingText(readinessReason) }],
     bullets: [
-      "Keep changes inside this thread and cycle only.",
-      "Use one concrete test before final publish.",
+      "Use this card as your current thesis for group discussion.",
+      "Keep revisions inside this thread and cycle only.",
     ],
   };
 }
@@ -362,6 +396,13 @@ function escapeHtml(value: string): string {
     .replace(/'/g, "&#39;");
 }
 
+function chipLabel(chip: CardStatusChip): string {
+  if (chip === "needs_refinement") {
+    return "needs one more pass";
+  }
+  return chip.replace("_", " ");
+}
+
 export function renderCardsHtml(model: CardStackViewModel): string {
   const cardHtml = model.cards
     .map((card) => {
@@ -371,7 +412,7 @@ export function renderCardsHtml(model: CardStackViewModel): string {
         .map((item) => `<div><dt>${escapeHtml(item.key)}</dt><dd>${escapeHtml(item.value)}</dd></div>`)
         .join("");
 
-      return `<section class=\"card\">\n  <div class=\"card-head\"><h2>${escapeHtml(card.title)}</h2><span class=\"chip chip-${card.status_chip}\">${escapeHtml(card.status_chip.replace("_", " "))}</span></div>\n  <div class=\"card-body\">${body}${bullets ? `<ul>${bullets}</ul>` : ""}</div>\n  ${
+      return `<section class=\"card\">\n  <div class=\"card-head\"><h2>${escapeHtml(card.title)}</h2><span class=\"chip chip-${card.status_chip}\">${escapeHtml(chipLabel(card.status_chip))}</span></div>\n  <div class=\"card-body\">${body}${bullets ? `<ul>${bullets}</ul>` : ""}</div>\n  ${
         details
           ? `<details class=\"card-details\"><summary>Details</summary><dl>${details}</dl></details>`
           : ""

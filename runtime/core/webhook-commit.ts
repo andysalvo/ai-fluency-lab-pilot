@@ -4,7 +4,14 @@ import { normalizeCanonicalUrl, sha256Hex } from "./idempotency.js";
 import { fetchNotionPagePayload, flattenNotionProperties } from "./notion.js";
 import { resolveProgramContext } from "./program-context.js";
 import { generateStarterBrief } from "./starter-brief.js";
-import type { NotionLikeWebhookPayload, ParticipantRole, MembershipState, ParticipantGlobalState, GlobalRole } from "./types.js";
+import type {
+  NotionLikeWebhookPayload,
+  ParticipantRole,
+  MembershipState,
+  ParticipantGlobalState,
+  GlobalRole,
+  PlannerFallbackReason,
+} from "./types.js";
 
 interface ProcessDeps {
   persistence: PersistenceAdapter;
@@ -107,6 +114,51 @@ async function maybeLoadNotionRow(payload: NotionLikeWebhookPayload, config: Run
   }
 
   return flattenNotionProperties(page.properties);
+}
+
+function asPlannerFallbackReason(value: string | undefined): PlannerFallbackReason | undefined {
+  if (value === "TIMEOUT" || value === "RATE_LIMIT" || value === "SCHEMA" || value === "CAPACITY") {
+    return value;
+  }
+  return undefined;
+}
+
+async function safeWriteStarterModelRun(
+  deps: ProcessDeps,
+  input: {
+    organization_id: string;
+    cycle_id: string;
+    root_problem_version_id: string;
+    thread_id: string;
+    participant_id: string;
+    payload: Record<string, unknown>;
+    replay_payload: Record<string, unknown>;
+  },
+): Promise<void> {
+  try {
+    const provider = readString(input.replay_payload, "planner_provider") === "kimi" ? "kimi" : "deterministic";
+    const plannerStatus = readString(input.replay_payload, "planner_status");
+    const status = plannerStatus === "fallback" ? "fallback" : "success";
+    await deps.persistence.insertModelRun({
+      organization_id: input.organization_id,
+      cycle_id: input.cycle_id,
+      root_problem_version_id: input.root_problem_version_id,
+      thread_id: input.thread_id,
+      participant_id: input.participant_id,
+      action_type: "starter_draft",
+      provider,
+      model_name: readString(input.payload, "model_name") ?? (provider === "kimi" ? deps.config.kimi_planner_model : "rule-based-deterministic"),
+      status,
+      prompt_contract_version: readString(input.payload, "prompt_contract_version") ?? "initial_thread_draft_v2",
+      latency_ms: readNumber(input.replay_payload, "latency_ms") ?? 0,
+      estimated_cost_usd: readNumber(input.replay_payload, "estimated_cost_usd"),
+      fallback_reason:
+        status === "fallback" ? asPlannerFallbackReason(readString(input.replay_payload, "fallback_reason")) : undefined,
+      created_at: deps.now?.() ?? new Date().toISOString(),
+    });
+  } catch {
+    // Telemetry writes are best-effort and must not block thread processing.
+  }
 }
 
 function isResearchInboxSource(sourceTable: string, config: RuntimeConfig): boolean {
@@ -335,6 +387,16 @@ async function handleResearchInbox(payload: NotionLikeWebhookPayload, deps: Proc
     focus_snapshot: deps.config.focus_snapshot,
     source_excerpt: sourceExcerpt,
     config: deps.config,
+  });
+
+  await safeWriteStarterModelRun(deps, {
+    organization_id: context.organization_id,
+    cycle_id: context.cycle_id,
+    root_problem_version_id: context.root_problem_version_id,
+    thread_id: threadId,
+    participant_id: participant.participant_id,
+    payload: generated.payload as unknown as Record<string, unknown>,
+    replay_payload: generated.replay_payload,
   });
 
   const updatedBrief = await deps.persistence.updateStarterBrief(starterBrief.starter_brief_id, {

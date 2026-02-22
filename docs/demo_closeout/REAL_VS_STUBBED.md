@@ -26,9 +26,9 @@
   - details/provenance collapsed by default
 - Operator summary endpoint (`GET /api/operator/summary`) for cycle health + reason-code visibility.
 - Optional planner provider routing:
-  - Kimi can be enabled for guided rounds + lab brief proposal only
+  - Kimi can be enabled for starter draft + guided rounds + lab brief proposal
   - deterministic fallback is immediate on timeout/rate-limit/schema/capacity issues
-  - telemetry writes to `model_runs` are non-blocking
+  - telemetry writes to `model_runs` are non-blocking across all planner actions
 - Hostile and flow tests covering cycle boundaries + intake + publish safety.
 
 ## Stubbed / Deferred
@@ -36,7 +36,7 @@
 - Notion sharing/group permissions remain manual by platform constraints.
 - Cloud deploy wiring and live Notion webhook registration still require operator env setup steps.
 - Full operator digest write-back into Notion is deferred (summary endpoint is live now).
-- Kimi is OFF by default until env is enabled in Vercel/Supabase runtime config.
+- Kimi is env-gated; behavior is deterministic-first when `PILOT_USE_KIMI_PLANNER` is false.
 - Notion idempotency is best-effort:
   - uses idempotency property match when DB schema includes one
   - otherwise falls back to deterministic title match
@@ -48,3 +48,4 @@
 3. Configure Notion Team Intake + Research Inbox DB sharing and webhook fields.
 4. Run `MINIMUM_TESTS_TO_RUN` and full acceptance suite on cloud URL.
 5. Add dad email through Team Intake and verify full loop twice.
+6. Monitor `/api/operator/summary`; if planner fallback exceeds 25% across the latest 50 runs, temporarily run deterministic-first.

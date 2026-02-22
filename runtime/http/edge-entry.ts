@@ -286,13 +286,13 @@ function stageLabels(stage: NonNullable<ThreadWorkspaceResponse["current_stage"]
       return {
         primary_action_label: "Add a Source",
         progress_label: "Step 1 of 6",
-        next_best_action: "Add one source URL and a short note to start your thread.",
+        next_best_action: "Add one article URL and a short note to start your thread.",
       };
     case "draft_ready":
       return {
         primary_action_label: "Refresh",
         progress_label: "Step 2 of 6",
-        next_best_action: "Wait for your Initial Thread Draft to finish processing.",
+        next_best_action: "Hold on while your first insight draft is created.",
       };
     case "round_in_progress":
       return {
@@ -304,13 +304,13 @@ function stageLabels(stage: NonNullable<ThreadWorkspaceResponse["current_stage"]
       return {
         primary_action_label: "Create Lab Brief Draft",
         progress_label: "Step 4 of 6",
-        next_best_action: "Create your Lab Brief Draft from the completed round.",
+        next_best_action: "Create your 5-sentence insight draft from this round.",
       };
     case "brief_ready":
       return {
         primary_action_label: "Run Quality Check",
         progress_label: "Step 5 of 6",
-        next_best_action: "Run quality check to confirm claim, value, and difference.",
+        next_best_action: "Run Quality Check to confirm claim, value, and difference.",
       };
     case "ready_to_publish":
       return {
@@ -1037,6 +1037,7 @@ export async function handleRequest(request: Request, deps: EdgeHandlerDeps = {}
       button, a.btn { border-radius:10px; padding: 9px 12px; border:1px solid var(--line); background:#fff; color:var(--ink); text-decoration:none; cursor:pointer; }
       button.primary { background: var(--ink); color:#fff; border-color: var(--ink); }
       .question { border: 1px dashed var(--line); border-radius: 10px; padding: 12px; margin-top: 10px; }
+      .helper { margin-top: 4px; font-size: 13px; color: var(--muted); }
       .status-msg { margin-top:10px; font-size:13px; color:var(--muted); }
       .link { color: var(--ink); font-size: 13px; text-decoration: underline; }
       @media (prefers-reduced-motion: reduce) { .status-callout, .card, .next-step { transition: none; } }
@@ -1055,6 +1056,7 @@ export async function handleRequest(request: Request, deps: EdgeHandlerDeps = {}
             ? `<div class="question">
                 <p><strong>Quick Question ${simpleView.next_question.ordinal} of 5</strong></p>
                 <p>${escapeHtml(simpleView.next_question.prompt)}</p>
+                <p class="helper">Pick the option that best matches your current thinking.</p>
                 <div class="row">
                   ${simpleView.next_question.options
                     .map(

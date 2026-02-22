@@ -475,7 +475,7 @@ export interface ModelRunRecord extends ProgramContext {
   run_id: string;
   thread_id?: string;
   participant_id?: string;
-  action_type: "guided_round" | "lab_brief_proposal";
+  action_type: "starter_draft" | "guided_round" | "lab_brief_proposal";
   provider: PlannerProvider;
   model_name: string;
   status: PlannerRunStatus;

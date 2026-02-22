@@ -30,8 +30,19 @@ Use Notion + Supabase + Vercel to run a cycle-scoped, safe, agentic collaboratio
 - Decision: thread mutation endpoints (`/api/questions/round/start`, `/api/questions/answer`, `/api/lab-brief/propose`) now resolve through one orchestration guard path in `edge-entry.ts`.
 - Decision: readiness logic is computed by `evaluateReadiness` only; guided-round logic now emits signals and defers reason-code evaluation to the canonical readiness module.
 - Decision: Notion write-back is deterministic and best-effort idempotent (idempotency key lookup when available, title fallback) with non-blocking failure logging.
-- Decision: Kimi planner routing is optional and env-gated (`PILOT_USE_KIMI_PLANNER=true`) for guided rounds + lab brief proposal only; default behavior stays deterministic/OpenAI path.
+- Decision: Kimi planner routing is env-gated (`PILOT_USE_KIMI_PLANNER=true`) and applies to starter draft, guided rounds, and lab brief proposal; fallback remains deterministic and readable.
 - Decision: planner telemetry (`model_runs`) is strictly non-blocking and uses contracted status + fallback reasons only (`success|fallback` with `TIMEOUT|RATE_LIMIT|SCHEMA|CAPACITY`).
+- Decision: Kimi is now primary for all generation paths (starter draft, guided questions, lab brief proposal) when enabled, with immediate deterministic readable fallback on timeout/rate-limit/schema/capacity.
+- Decision: student synthesis output is now a strict 5-Sentence Insight Card framing:
+  1. Core idea
+  2. Student pattern
+  3. Key tension
+  4. Strategic implication
+  5. Cohort question
+- Decision: guided-round language contract is `guided_round_v2` with 14-word option cap and plain consultant-style prompts.
+- Decision: lab-brief language contract is `lab_brief_proposal_v2` with 22-word sentence cap and student-readable tone.
+- Decision: student status wording for incomplete quality state is now `Needs one more pass`.
+- Decision: operator fallback gate is documented: if planner fallback rate exceeds 25% across rolling 50 runs, temporarily switch to deterministic-first mode.
 
 ## Alternatives Rejected
 - Rejected: default to "current cycle" from config.

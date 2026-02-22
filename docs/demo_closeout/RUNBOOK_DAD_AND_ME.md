@@ -10,6 +10,7 @@ Prove two accounts can authenticate, select cycle, submit source, receive a Star
    - `ajs10845@psu.edu` = `role:operator`, `membership_state:active`
    - `andysalvo26@gmail.com` = `role:student`, `membership_state:invited|active`
 4. Start Google login: `GET /api/auth/google/start?cycle_id=<active_cycle_id>&next=/submit`.
+   - Use production URL only (`https://ai-fluency-lab-pilot.vercel.app`), not preview links that trigger Vercel account login.
 5. Complete login as `andysalvo26@gmail.com`; callback sets session and redirects to `/submit`.
 6. Submit source in guided form:
    - `url`
@@ -17,6 +18,7 @@ Prove two accounts can authenticate, select cycle, submit source, receive a Star
 7. Verify submit response has `reason_code=STARTER_BRIEF_READY`.
 8. Open visible surface endpoint and confirm Starter Brief includes provenance:
    - `Built only from: <URL>`
+   - Confirm thread shows one-next-step flow with one question at a time.
 9. Run readiness evaluate (`claim/value/difference`) and confirm blocked reason if criteria missing.
 10. Run publish with explicit confirmation and verify:
    - `reason_code=OK`
