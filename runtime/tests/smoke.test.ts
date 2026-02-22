@@ -4,6 +4,7 @@ import test from "node:test";
 import { loadRuntimeConfig } from "../adapters/env.js";
 import { InMemoryPersistenceAdapter } from "../adapters/inmemory.js";
 import { normalizeLabBriefContent, validateLabBriefContent } from "../core/lab-brief.js";
+import { buildNotionCardBlocks } from "../core/notion.js";
 import { mapWorkspaceToCardStack } from "../frontstage/cards.js";
 import type { ThreadWorkspaceResponse } from "../core/types.js";
 import {
@@ -784,6 +785,28 @@ test("card mapper keeps provenance in collapsed details", () => {
   assert.ok(draftCard);
   const provenance = draftCard!.details?.find((item) => item.key === "provenance");
   assert.equal(provenance?.value, "Built only from: https://example.com");
+});
+
+test("notion card blocks filter placeholder lines", () => {
+  const workspace: ThreadWorkspaceResponse = {
+    ok: true,
+    reason_code: "OK",
+    organization_id: "applied-ai-labs",
+    cycle_id: "cycle-001",
+    root_problem_version_id: "pilot-v1",
+    thread_id: "thread-001",
+    rounds: [],
+    question_items: [],
+    lab_brief_draft: null,
+    publish_state: "not_ready",
+    next_best_action: "Start Guided Round 1 (5 quick questions).",
+  };
+
+  const stack = mapWorkspaceToCardStack(workspace, "Canonical focus text");
+  const blocks = buildNotionCardBlocks(stack);
+  const serialized = JSON.stringify(blocks).toLowerCase();
+  assert.equal(serialized.includes("no guided rounds started yet"), false);
+  assert.equal(serialized.includes("no lab brief proposal yet"), false);
 });
 
 test("guided round + lab brief proposal flow works with deterministic cards path", async () => {

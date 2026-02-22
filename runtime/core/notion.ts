@@ -495,12 +495,25 @@ function emojiForStatus(status: CardStackViewModel["status_chip"]): string {
 
 function isUiPlaceholderLine(value: string): boolean {
   const normalized = value.trim().toLowerCase();
+  if (normalized.length === 0) {
+    return true;
+  }
+
+  if (normalized.includes("not yet available")) {
+    return true;
+  }
+
+  if (/^no .*(yet\.?|available\.?)$/.test(normalized)) {
+    return true;
+  }
+
   return (
-    normalized.includes("not yet available") ||
     normalized === "no source submission found for this thread yet." ||
     normalized === "no guided rounds started yet." ||
     normalized === "no lab brief proposal yet." ||
-    normalized === "no lab brief fields available yet. generate a proposal from this thread."
+    normalized === "no lab brief fields available yet. generate a proposal from this thread." ||
+    normalized === "no active round." ||
+    normalized === "optional"
   );
 }
 

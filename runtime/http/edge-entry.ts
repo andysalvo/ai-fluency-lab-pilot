@@ -861,6 +861,7 @@ export async function handleRequest(request: Request, deps: EdgeHandlerDeps = {}
       const organizationId = ${JSON.stringify(organizationId)};
       const statusMsg = document.getElementById(\"status-msg\");
       const setStatus = (msg) => { statusMsg.textContent = msg; };
+      const requestId = () => ((globalThis.crypto && globalThis.crypto.randomUUID) ? globalThis.crypto.randomUUID() : String(Date.now()));
 
       document.getElementById(\"start-round\")?.addEventListener(\"click\", async () => {
         setStatus(\"Starting guided round...\");
@@ -868,7 +869,7 @@ export async function handleRequest(request: Request, deps: EdgeHandlerDeps = {}
           method: \"POST\",
           headers: { \"content-type\": \"application/json\" },
           credentials: \"include\",
-          body: JSON.stringify({ thread_id: threadId, cycle_id: cycleId, organization_id: organizationId, client_request_id: crypto.randomUUID() }),
+          body: JSON.stringify({ thread_id: threadId, cycle_id: cycleId, organization_id: organizationId, client_request_id: requestId() }),
         });
         const body = await response.json();
         setStatus(response.ok ? \"Guided round ready.\" : \"Blocked: \" + (body.reason_code || \"UNKNOWN\"));
@@ -898,7 +899,7 @@ export async function handleRequest(request: Request, deps: EdgeHandlerDeps = {}
           method: \"POST\",
           headers: { \"content-type\": \"application/json\" },
           credentials: \"include\",
-          body: JSON.stringify({ thread_id: threadId, cycle_id: cycleId, organization_id: organizationId, client_request_id: crypto.randomUUID() }),
+          body: JSON.stringify({ thread_id: threadId, cycle_id: cycleId, organization_id: organizationId, client_request_id: requestId() }),
         });
         const body = await response.json();
         setStatus(response.ok ? \"Lab Brief proposal ready.\" : \"Blocked: \" + (body.reason_code || \"UNKNOWN\"));
@@ -940,7 +941,7 @@ export async function handleRequest(request: Request, deps: EdgeHandlerDeps = {}
             value: document.getElementById(\"value\").checked,
             difference: document.getElementById(\"difference\").checked,
             explicit_confirmation: document.getElementById(\"confirm\").checked,
-            client_request_id: crypto.randomUUID(),
+            client_request_id: requestId(),
           }),
         });
         const body = await response.json();
