@@ -106,6 +106,47 @@ async function guardAdmin(
   input: AdminActorInput,
   deps: AdminDeps,
 ): Promise<CycleAdminActionResponse | null> {
+  if (action === "create") {
+    const actorEmail = input.actor_email?.trim().toLowerCase();
+    const participant = actorEmail ? await deps.persistence.getParticipantByEmailCanonical(actorEmail) : null;
+    const allowed = Boolean(participant && participant.global_state === "active" && (participant.global_role === "operator" || participant.global_role === "admin"));
+    const reasonCode = !actorEmail
+      ? "IDENTITY_UNRESOLVED"
+      : !participant
+        ? "NO_MEMBERSHIP_FOR_CYCLE"
+        : participant.global_state !== "active"
+          ? "GLOBAL_STATE_BLOCKED"
+          : participant.global_role === "operator" || participant.global_role === "admin"
+            ? "OK"
+            : "ROLE_DENY";
+
+    await deps.persistence.insertProtectedActionAudit({
+      action: "admin_override",
+      participant_id: participant?.participant_id,
+      actor_email: actorEmail,
+      membership_state: "active",
+      global_state: participant?.global_state ?? "active",
+      role: "operator",
+      allowed,
+      reason_code: reasonCode,
+      why: input.why ?? input.reason,
+      organization_id: context.organization_id,
+      cycle_id: context.cycle_id,
+      root_problem_version_id: context.root_problem_version_id,
+    });
+
+    if (!allowed) {
+      return failBase(
+        action,
+        context,
+        reasonCode,
+        "Admin cycle-create denied by server-side global role guard.",
+      );
+    }
+
+    return null;
+  }
+
   const guard = await guardAndAuditAction(
     "admin_override",
     {
