@@ -707,6 +707,37 @@ export async function handleRequest(request: Request, deps: EdgeHandlerDeps = {}
     if (!payload.cycle_id) {
       payload.cycle_id = request.headers.get("x-cycle-id") ?? undefined;
     }
+
+    // Authorize admin action before processing backfill
+    const actorEmail = actorEmailFromRequest(payload, request);
+    const programContext = resolveProgramContext(
+      {
+        organization_id: readString(payload, "organization_id"),
+        cycle_id: readString(payload, "cycle_id"),
+        root_problem_version_id: readString(payload, "root_problem_version_id"),
+      },
+      config,
+    );
+    const guard = await guardAndAuditAction(
+      "admin_override",
+      {
+        actor_email: actorEmail,
+        cycle_id: programContext.cycle_id,
+        organization_id: programContext.organization_id,
+        root_problem_version_id: programContext.root_problem_version_id,
+        why: readString(payload, "reason") ?? "backfill intake event",
+      },
+      { persistence, config, now },
+    );
+
+    if (!guard.decision.allowed) {
+      return json(403, {
+        ok: false,
+        reason_code: guard.decision.reason_code,
+        message: "Admin action denied by server-side membership/role guard.",
+      });
+    }
+
     if (!payload.idempotency_key) {
       payload.idempotency_key = `backfill:${Date.now()}`;
     }
