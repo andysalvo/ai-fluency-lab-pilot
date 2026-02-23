@@ -7,7 +7,8 @@
   "scripts": {
     "dev": "tsx runtime/http/local-server.ts",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test runtime/tests/*.test.ts"
+    "test": "node --import tsx --test runtime/tests/*.test.ts",
+    "backfill:idea-embeddings": "tsx scripts/backfill-idea-embeddings.ts"
   },
   "devDependencies": {
     "@types/node": "^22.13.8",

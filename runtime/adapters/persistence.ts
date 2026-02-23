@@ -3,6 +3,9 @@ import type {
   CycleMembershipRecord,
   CycleSnapshotArtifactRecord,
   CycleSnapshotRecord,
+  IdeaEmbeddingBackfillItem,
+  IdeaEmbeddingRecord,
+  IdeaEntryRecord,
   IngestRecord,
   IngestState,
   LabRecordEntry,
@@ -114,6 +117,45 @@ export interface PersistenceAdapter {
   listVisibleStarterBriefs(participantId: string, cycleId: string): Promise<StarterBriefRecord[]>;
 
   listVisibleLabRecord(cycleId: string): Promise<LabRecordEntry[]>;
+
+  getIdeaEntryBySourceEventKey(sourceEventKey: string): Promise<IdeaEntryRecord | null>;
+
+  getLatestIdeaEntryByNotionPageId(notionPageId: string): Promise<IdeaEntryRecord | null>;
+
+  listIdeaEntryVersionsByNotionPageId(notionPageId: string): Promise<IdeaEntryRecord[]>;
+
+  insertIdeaEntry(
+    record: Omit<IdeaEntryRecord, "entry_version_id" | "created_at"> & { entry_version_id?: string; created_at?: string },
+  ): Promise<IdeaEntryRecord>;
+
+  upsertIdeaEmbedding(
+    record: Omit<IdeaEmbeddingRecord, "updated_at"> & { updated_at?: string },
+  ): Promise<IdeaEmbeddingRecord>;
+
+  updateIdeaEmbedding(
+    entryVersionId: string,
+    update: {
+      embedding_status: IdeaEmbeddingRecord["embedding_status"];
+      embedding_vector?: number[];
+      error_code?: string;
+      embedded_at?: string;
+      updated_at?: string;
+    },
+  ): Promise<IdeaEmbeddingRecord | null>;
+
+  listIdeaEmbeddingsForBackfill(limit: number): Promise<IdeaEmbeddingBackfillItem[]>;
+
+  // Warehouse v1: fast webhook path should be enqueue-only (no Notion fetch / no embeddings).
+  warehouseEnqueueIdeaJob(input: {
+    idempotency_key: string;
+    source_table: string;
+    source_record_id: string;
+    event_type: string;
+    occurred_at: string;
+    organization_id: string;
+    cycle_id: string;
+    root_problem_version_id: string;
+  }): Promise<{ deduped: boolean; event_id: string | null; job_id: string | null }>;
 
   publishLabRecordTxn(input: PublishTxnInput): Promise<PublishTxnResult>;
 

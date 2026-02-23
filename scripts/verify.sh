@@ -20,30 +20,18 @@ if command -v rg >/dev/null 2>&1; then
 fi
 
 expected_files=(
-  "00_INDEX_AND_READING_ORDER.md"
-  "01_AGENT_CHARTER_AND_LOCKED_RULES.md"
-  "02_OPERATOR_CONTRACT_AND_AUTONOMY_LEVEL.md"
-  "03_ARCHITECTURE_DECISION_AND_RATIONALE.md"
-  "04_NOTION_AS_CONTROL_PLANE.md"
-  "05_TOOLING_CLI_AND_RUNBOOK.md"
-  "06_VERIFICATION_HARNESS_AND_CI.md"
-  "07_SECURITY_SECRETS_AND_ACCESS.md"
-  "08_RELEASE_WORKFLOW_AND_EVIDENCE_BUNDLES.md"
-  "09_COLLABORATION_AND_HANDOFF.md"
+  "00_CYCLE_01_SYSTEM_RATIONALE.md"
+  "01_PRODUCT_SCOPE.md"
+  "02_NOTION_FORM_SPEC.md"
+  "03_SUPABASE_WAREHOUSE_SCHEMA.md"
+  "04_INGEST_IDEMPOTENCY_AND_EMBEDDING.md"
+  "05_OPERATOR_ANALYSIS_WORKFLOW.md"
+  "06_SCALE_PLAN_3_TO_20.md"
+  "07_ACCEPTANCE_TESTS.md"
+  "08_RESEARCH_BASIS.md"
 )
 
-required_headers=(
-  "## Intent"
-  "## Canonical Inputs"
-  "## Canonical Outputs"
-  "## Normative Rules"
-  "## State and Decision Logic"
-  "## Failure Modes and Recovery"
-  "## Verification"
-  "## Evidence"
-)
-
-pack_dir="docs/agent_setup_pack"
+pack_dir="docs/warehouse"
 
 if [ ! -d "$pack_dir" ]; then
   fail "missing required directory: $pack_dir"
@@ -52,7 +40,7 @@ else
   expected_list=$(printf '%s\n' "${expected_files[@]}" | sort)
 
   if [ "$actual_list" != "$expected_list" ]; then
-    fail "setup pack files do not match required exact 10-file set"
+    fail "warehouse doc files do not match required set"
     echo "[verify] expected files:"
     printf '%s\n' "${expected_files[@]}"
     echo "[verify] actual files:"
@@ -62,38 +50,22 @@ else
       echo "(none)"
     fi
   else
-    pass "setup pack has exact required 10 files"
+    pass "warehouse docs have required file set"
   fi
 
-  for file in "${expected_files[@]}"; do
-    path="$pack_dir/$file"
-    if [ ! -f "$path" ]; then
-      fail "missing file: $path"
-      continue
+  if [ -f "$pack_dir/00_CYCLE_01_SYSTEM_RATIONALE.md" ]; then
+    if grep -qi 'How do we build sustained AI fluency inside a student population' "$pack_dir/00_CYCLE_01_SYSTEM_RATIONALE.md"; then
+      pass "cycle rationale includes canonical focus question"
+    else
+      fail "cycle rationale missing canonical focus question"
     fi
+  fi
+fi
 
-    h2_lines=()
-    while IFS= read -r line; do
-      h2_lines+=("$line")
-    done < <(grep '^## ' "$path" || true)
-
-    if [ ${#h2_lines[@]} -ne ${#required_headers[@]} ]; then
-      fail "$path has ${#h2_lines[@]} H2 headers, expected ${#required_headers[@]}"
-      continue
-    fi
-
-    header_ok=1
-    for i in "${!required_headers[@]}"; do
-      if [ "${h2_lines[$i]}" != "${required_headers[$i]}" ]; then
-        header_ok=0
-        fail "$path header order mismatch at position $((i + 1)): expected '${required_headers[$i]}', got '${h2_lines[$i]}'"
-      fi
-    done
-
-    if [ "$header_ok" -eq 1 ]; then
-      pass "$path has required H2 headers in exact order"
-    fi
-  done
+if [ -d "docs/legacy" ]; then
+  pass "legacy archive directory exists"
+else
+  fail "missing docs/legacy archive"
 fi
 
 # Secret pattern scan (heuristic). Pointer format and TBD placeholders are allowed.

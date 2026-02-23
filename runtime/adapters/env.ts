@@ -24,6 +24,10 @@ export interface RuntimeConfig {
   notion_root_page_url?: string;
   notion_db_research_inbox_id?: string;
   notion_db_team_intake_id?: string;
+  notion_db_idea_intake_id?: string;
+  warehouse_focus_id: string;
+  embedding_model: string;
+  embedding_timeout_ms: number;
 }
 
 function asGlobalRole(value: string | undefined): GlobalRole {
@@ -63,6 +67,19 @@ function asPersistenceBackend(value: string | undefined): PersistenceBackend {
   return "inmemory";
 }
 
+function asPositiveInt(value: string | undefined, fallback: number): number {
+  if (!value) {
+    return fallback;
+  }
+
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+
+  return Math.floor(parsed);
+}
+
 export function loadRuntimeConfig(env: Record<string, string | undefined>): RuntimeConfig {
   return {
     persistence_backend: asPersistenceBackend(env.PILOT_PERSISTENCE_BACKEND),
@@ -77,7 +94,7 @@ export function loadRuntimeConfig(env: Record<string, string | undefined>): Runt
     operator_email: env.PILOT_OPERATOR_EMAIL,
     organization_id: env.PILOT_ORGANIZATION_ID ?? "applied-ai-labs",
     program_label: env.PILOT_PROGRAM_LABEL ?? "AI Fluency Lab",
-    default_cycle_id: env.PILOT_ACTIVE_PROGRAM_CYCLE_ID ?? "cycle-innovation-day-001",
+    default_cycle_id: env.PILOT_ACTIVE_PROGRAM_CYCLE_ID ?? "cycle_01",
     root_problem_version_id: env.PILOT_ROOT_PROBLEM_VERSION_ID ?? "pilot-v1",
     focus_snapshot:
       env.PILOT_FOCUS_SNAPSHOT ??
@@ -89,5 +106,9 @@ export function loadRuntimeConfig(env: Record<string, string | undefined>): Runt
     notion_root_page_url: env.PILOT_NOTION_ROOT_PAGE_URL,
     notion_db_research_inbox_id: env.PILOT_NOTION_DB_RESEARCH_INBOX_ID,
     notion_db_team_intake_id: env.PILOT_NOTION_DB_TEAM_INTAKE_ID,
+    notion_db_idea_intake_id: env.PILOT_NOTION_DB_IDEA_INTAKE_ID,
+    warehouse_focus_id: env.PILOT_WAREHOUSE_FOCUS_ID ?? "ai_fluency_root",
+    embedding_model: env.PILOT_EMBEDDING_MODEL ?? "text-embedding-3-small",
+    embedding_timeout_ms: asPositiveInt(env.PILOT_EMBEDDING_TIMEOUT_MS, 8000),
   };
 }

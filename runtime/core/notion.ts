@@ -8,6 +8,27 @@ function normalizeKey(key: string): string {
     .replace(/^_+|_+$/g, "");
 }
 
+function readActorFields(property: Record<string, unknown>): { id?: string; email?: string; name?: string } {
+  const actor = property.type === "created_by" ? property.created_by : property.last_edited_by;
+  if (!actor || typeof actor !== "object") {
+    return {};
+  }
+
+  const actorRecord = actor as Record<string, unknown>;
+  const id = typeof actorRecord.id === "string" && actorRecord.id.trim().length > 0 ? actorRecord.id.trim() : undefined;
+  const person = actorRecord.person;
+  const personEmail = person && typeof person === "object" ? (person as Record<string, unknown>).email : undefined;
+  const email =
+    typeof personEmail === "string" && personEmail.trim().length > 0
+      ? personEmail.trim().toLowerCase()
+      : typeof actorRecord.email === "string" && actorRecord.email.trim().length > 0
+        ? actorRecord.email.trim().toLowerCase()
+        : undefined;
+  const name = typeof actorRecord.name === "string" && actorRecord.name.trim().length > 0 ? actorRecord.name.trim() : undefined;
+
+  return { id, email, name };
+}
+
 function readNotionPropertyValue(property: Record<string, unknown>): unknown {
   const type = typeof property.type === "string" ? property.type : "";
 
@@ -56,6 +77,16 @@ function readNotionPropertyValue(property: Record<string, unknown>): unknown {
 
   if (type === "phone_number") {
     return typeof property.phone_number === "string" ? property.phone_number : undefined;
+  }
+
+  if (type === "created_time" || type === "last_edited_time") {
+    const value = property[type];
+    return typeof value === "string" ? value : undefined;
+  }
+
+  if (type === "created_by" || type === "last_edited_by") {
+    const fields = readActorFields(property);
+    return fields.email ?? fields.id ?? fields.name;
   }
 
   return undefined;
@@ -116,13 +147,29 @@ export function flattenNotionProperties(properties: Record<string, unknown>): Re
       continue;
     }
 
-    const value = readNotionPropertyValue(rawProperty as Record<string, unknown>);
+    const propertyRecord = rawProperty as Record<string, unknown>;
+    const value = readNotionPropertyValue(propertyRecord);
     if (value === undefined || value === null || value === "") {
       continue;
     }
 
+    const normalizedKey = normalizeKey(key);
     flattened[key] = value;
-    flattened[normalizeKey(key)] = value;
+    flattened[normalizedKey] = value;
+
+    const type = typeof propertyRecord.type === "string" ? propertyRecord.type : "";
+    if (type === "created_by" || type === "last_edited_by") {
+      const fields = readActorFields(propertyRecord);
+      if (fields.id) {
+        flattened[`${normalizedKey}_id`] = fields.id;
+      }
+      if (fields.email) {
+        flattened[`${normalizedKey}_email`] = fields.email;
+      }
+      if (fields.name) {
+        flattened[`${normalizedKey}_name`] = fields.name;
+      }
+    }
   }
 
   return flattened;

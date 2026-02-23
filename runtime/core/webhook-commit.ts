@@ -1,6 +1,7 @@
 import type { RuntimeConfig } from "../adapters/env.js";
 import type { PersistenceAdapter } from "../adapters/persistence.js";
 import { normalizeCanonicalUrl, sha256Hex } from "./idempotency.js";
+import { generateIdeaEmbedding, normalizeIdeaText } from "./idea-embeddings.js";
 import { fetchNotionPagePayload, flattenNotionProperties } from "./notion.js";
 import { resolveProgramContext } from "./program-context.js";
 import { generateStarterBrief } from "./starter-brief.js";
@@ -58,6 +59,19 @@ function readNumber(source: Record<string, unknown>, key: string): number | unde
 
 function canonicalEmail(email: string): string {
   return email.trim().toLowerCase();
+}
+
+function toIsoTimestamp(value: string | undefined, fallback: string): string {
+  if (!value) {
+    return fallback;
+  }
+
+  const parsed = Date.parse(value);
+  if (Number.isNaN(parsed)) {
+    return fallback;
+  }
+
+  return new Date(parsed).toISOString();
 }
 
 function makeUuid(): string {
@@ -125,6 +139,15 @@ function isTeamIntakeSource(sourceTable: string, config: RuntimeConfig): boolean
   }
 
   return Boolean(config.notion_db_team_intake_id && normalized === config.notion_db_team_intake_id.toLowerCase());
+}
+
+function isIdeaIntakeSource(sourceTable: string, config: RuntimeConfig): boolean {
+  const normalized = sourceTable.trim().toLowerCase();
+  if (normalized === "idea_intake" || normalized === "idea intake") {
+    return true;
+  }
+
+  return Boolean(config.notion_db_idea_intake_id && normalized === config.notion_db_idea_intake_id.toLowerCase());
 }
 
 async function handleTeamIntake(payload: NotionLikeWebhookPayload, deps: ProcessDeps): Promise<CommitProcessResult> {
@@ -211,6 +234,165 @@ async function handleTeamIntake(payload: NotionLikeWebhookPayload, deps: Process
       role,
       membership_state: membershipState,
       credits,
+    },
+  };
+}
+
+async function handleIdeaIntake(payload: NotionLikeWebhookPayload, deps: ProcessDeps): Promise<CommitProcessResult> {
+  const now = deps.now ?? (() => new Date().toISOString());
+  const context = resolveProgramContext(payload, deps.config);
+  const payloadProps = payload.properties && typeof payload.properties === "object" ? payload.properties : {};
+  const notionRow = await maybeLoadNotionRow(payload, deps.config);
+  const row = {
+    ...notionRow,
+    ...payloadProps,
+    ...payload,
+  } as Record<string, unknown>;
+
+  const ideaTextRaw = readString(row, "idea", "idea_text", "submission", "response", "entry");
+  const notionUserId = readString(row, "created_by_id", "created_by_user_id", "submitted_by_id");
+  const participantEmail = readString(row, "created_by_email", "created_by", "submitted_by", "actor_email", "email");
+  const participantKey = notionUserId
+    ? `notion_user:${notionUserId}`
+    : participantEmail
+      ? `email:${canonicalEmail(participantEmail)}`
+      : undefined;
+  const notionLastEdited = readString(row, "last_edited_time");
+
+  if (!ideaTextRaw) {
+    return {
+      ok: true,
+      result_code: "IDEA_INTAKE_IGNORED_MISSING_IDEA",
+      message: "Idea Intake record ignored because idea text is missing.",
+      details: {
+        ignored: true,
+        missing: "idea_text",
+      },
+    };
+  }
+
+  if (!participantKey) {
+    return {
+      ok: true,
+      result_code: "IDEA_INTAKE_IGNORED_MISSING_IDENTITY",
+      message: "Idea Intake record ignored because author identity is missing.",
+      details: {
+        ignored: true,
+        missing: "participant_key",
+      },
+    };
+  }
+
+  const normalizedIdea = normalizeIdeaText(ideaTextRaw);
+  if (!normalizedIdea) {
+    return {
+      ok: true,
+      result_code: "IDEA_INTAKE_IGNORED_EMPTY_NORM",
+      message: "Idea Intake record ignored because idea text is empty after normalization.",
+      details: {
+        ignored: true,
+        missing: "idea_text_norm",
+      },
+    };
+  }
+
+  const notionEditedAtIso = toIsoTimestamp(notionLastEdited, payload.occurred_at);
+  const ideaHash = await sha256Hex(normalizedIdea);
+  const sourceEventKey = `${payload.source_record_id}:${notionEditedAtIso}:${ideaHash}`;
+  const existingVersion = await deps.persistence.getIdeaEntryBySourceEventKey(sourceEventKey);
+  if (existingVersion) {
+    return {
+      ok: true,
+      result_code: "IDEA_INTAKE_DUPLICATE",
+      message: "Idea version already recorded.",
+      details: {
+        entry_version_id: existingVersion.entry_version_id,
+        notion_page_id: existingVersion.notion_page_id,
+        version_no: existingVersion.version_no,
+      },
+    };
+  }
+
+  const latest = await deps.persistence.getLatestIdeaEntryByNotionPageId(payload.source_record_id);
+  const versionNo = latest ? latest.version_no + 1 : 1;
+  let entry;
+  try {
+    entry = await deps.persistence.insertIdeaEntry({
+      notion_page_id: payload.source_record_id,
+      version_no: versionNo,
+      participant_key: participantKey,
+      organization_id: context.organization_id,
+      cycle_id: context.cycle_id,
+      root_problem_version_id: context.root_problem_version_id,
+      focus_id: deps.config.warehouse_focus_id,
+      focus_text_snapshot: deps.config.focus_snapshot,
+      idea_text_raw: ideaTextRaw,
+      idea_text_norm: normalizedIdea,
+      notion_last_edited_time: notionEditedAtIso,
+      source_event_key: sourceEventKey,
+      created_at: now(),
+    });
+  } catch {
+    const duplicateAfterRace = await deps.persistence.getIdeaEntryBySourceEventKey(sourceEventKey);
+    if (!duplicateAfterRace) {
+      return {
+        ok: false,
+        result_code: "IDEA_INTAKE_INSERT_FAILED",
+        message: "Failed to persist idea entry.",
+      };
+    }
+    entry = duplicateAfterRace;
+  }
+
+  try {
+    await deps.persistence.upsertIdeaEmbedding({
+      entry_version_id: entry.entry_version_id,
+      embedding_model: deps.config.embedding_model,
+      embedding_status: "pending",
+      updated_at: now(),
+    });
+  } catch {
+    // Continue. Entry persistence is primary; embedding status can be backfilled later.
+  }
+
+  const embedding = await generateIdeaEmbedding({
+    text: normalizedIdea,
+    config: deps.config,
+  });
+
+  try {
+    if (embedding.ok && embedding.vector) {
+      await deps.persistence.updateIdeaEmbedding(entry.entry_version_id, {
+        embedding_status: "ready",
+        embedding_vector: embedding.vector,
+        error_code: undefined,
+        embedded_at: now(),
+        updated_at: now(),
+      });
+    } else {
+      await deps.persistence.updateIdeaEmbedding(entry.entry_version_id, {
+        embedding_status: "failed",
+        error_code: embedding.error_code ?? "EMBEDDING_UNKNOWN",
+        embedded_at: undefined,
+        updated_at: now(),
+      });
+    }
+  } catch {
+    // Non-blocking by design; pending/failed states are handled by backfill.
+  }
+
+  return {
+    ok: true,
+    result_code: "IDEA_INTAKE_SAVED",
+    message: "Idea stored and embedding status updated.",
+    details: {
+      entry_version_id: entry.entry_version_id,
+      notion_page_id: entry.notion_page_id,
+      version_no: entry.version_no,
+      embedding_status: embedding.ok ? "ready" : "failed",
+      embedding_model: deps.config.embedding_model,
+      focus_id: deps.config.warehouse_focus_id,
+      participant_key: entry.participant_key,
     },
   };
 }
@@ -371,6 +553,10 @@ async function handleResearchInbox(payload: NotionLikeWebhookPayload, deps: Proc
 export async function processCommitEvent(payload: NotionLikeWebhookPayload, deps: ProcessDeps): Promise<CommitProcessResult> {
   if (isTeamIntakeSource(payload.source_table, deps.config)) {
     return handleTeamIntake(payload, deps);
+  }
+
+  if (isIdeaIntakeSource(payload.source_table, deps.config)) {
+    return handleIdeaIntake(payload, deps);
   }
 
   if (isResearchInboxSource(payload.source_table, deps.config)) {

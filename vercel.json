@@ -1,4 +1,8 @@
 {
+  "crons": [
+    { "path": "/api/cron/warehouse/ingest", "schedule": "* * * * *" },
+    { "path": "/api/cron/warehouse/embed", "schedule": "* * * * *" }
+  ],
   "rewrites": [
     {
       "source": "/",

@@ -92,6 +92,72 @@ function cycleIdFromRequest(payload: Record<string, unknown>, request: Request):
   return readString(payload, "cycle_id") ?? request.headers.get("x-cycle-id") ?? undefined;
 }
 
+function isIdeaIntakeSource(sourceTable: string | undefined, config: RuntimeConfig): boolean {
+  if (!sourceTable) {
+    return false;
+  }
+
+  const normalized = sourceTable.trim().toLowerCase();
+  if (normalized === "idea_intake" || normalized === "idea intake") {
+    return true;
+  }
+
+  return Boolean(config.notion_db_idea_intake_id && normalized === config.notion_db_idea_intake_id.toLowerCase());
+}
+
+function supabaseFunctionsBaseUrl(supabaseUrl: string | undefined): string | null {
+  if (!supabaseUrl) {
+    return null;
+  }
+  try {
+    const url = new URL(supabaseUrl);
+    // Expect: https://<project-ref>.supabase.co
+    const match = url.hostname.match(/^([a-z0-9]+)\.supabase\.co$/i);
+    if (!match) {
+      return null;
+    }
+    const projectRef = match[1];
+    return `https://${projectRef}.functions.supabase.co`;
+  } catch {
+    return null;
+  }
+}
+
+function cronAuthorized(request: Request): boolean {
+  // Vercel Cron sends this header on scheduled runs.
+  if (request.headers.get("x-vercel-cron") === "1") {
+    return true;
+  }
+
+  // Optional manual override for debugging (no secrets in git). If unset, disabled.
+  if (typeof process === "undefined" || !process.env) {
+    return false;
+  }
+  const expected = process.env.PILOT_CRON_SECRET ?? process.env.PILOT_WAREHOUSE_CRON_TOKEN;
+  if (!expected) {
+    return false;
+  }
+  const url = new URL(request.url);
+  const secret = url.searchParams.get("secret") ?? url.searchParams.get("token");
+  return Boolean(secret && secret === expected);
+}
+
+async function postWithTimeout(url: string, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { method: "POST", signal: controller.signal });
+  } finally {
+    clearTimeout(id);
+  }
+}
+
+function truncateText(input: string, maxBytes: number): string {
+  const buf = Buffer.from(input, "utf8");
+  if (buf.byteLength <= maxBytes) return input;
+  return buf.subarray(0, maxBytes).toString("utf8");
+}
+
 function getDefaultContext(): DefaultRuntimeContext {
   if (defaultContext) {
     return defaultContext;
@@ -173,6 +239,49 @@ export async function handleRequest(request: Request, deps: EdgeHandlerDeps = {}
 
   const url = new URL(request.url);
 
+  // Warehouse v1: cloud scheduler endpoints (Vercel Cron -> Supabase Edge worker functions).
+  // These endpoints do not accept student input and never touch Notion/OpenAI directly.
+  const isCronIngest = url.pathname === "/api/cron/warehouse/ingest" || url.pathname === "/api/warehouse/ingest";
+  const isCronEmbed = url.pathname === "/api/cron/warehouse/embed" || url.pathname === "/api/warehouse/embed";
+  if (isCronIngest || isCronEmbed) {
+    if (request.method !== "GET") {
+      return json(405, { ok: false, error: "METHOD_NOT_ALLOWED" });
+    }
+    if (!cronAuthorized(request)) {
+      return json(403, { ok: false, error: "FORBIDDEN" });
+    }
+
+    const base = supabaseFunctionsBaseUrl(config.supabase_url);
+    if (!base) {
+      return json(500, { ok: false, error: "SUPABASE_URL_INVALID" });
+    }
+
+    const target = isCronIngest ? `${base}/warehouse-ingest-worker` : `${base}/warehouse-embedding-worker`;
+    const started = Date.now();
+    try {
+      const upstream = await postWithTimeout(target, 15_000);
+      const text = await upstream.text();
+      return json(200, {
+        ok: upstream.ok,
+        worker_http_status: upstream.status,
+        worker_body: truncateText(text, 2048),
+        ts: now(),
+        latency_ms: Date.now() - started,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return json(200, {
+        ok: false,
+        worker_http_status: null,
+        worker_body: null,
+        error: "UPSTREAM_FAILED",
+        message: truncateText(message, 512),
+        ts: now(),
+        latency_ms: Date.now() - started,
+      });
+    }
+  }
+
   if (request.method === "GET" && url.pathname === "/") {
     const notionHref = config.notion_root_page_url ?? "#";
     const focus = config.focus_snapshot;
@@ -253,8 +362,60 @@ export async function handleRequest(request: Request, deps: EdgeHandlerDeps = {}
   if (request.method === "POST" && url.pathname === "/api/notion/webhook") {
     const payloadRaw = await parseJsonBody(request);
     const payload = asObject(payloadRaw);
+    const sourceTable = readString(payload, "source_table");
     if (!payload.cycle_id) {
       payload.cycle_id = request.headers.get("x-cycle-id") ?? undefined;
+    }
+    if (!payload.cycle_id && isIdeaIntakeSource(sourceTable, config)) {
+      payload.cycle_id = config.default_cycle_id;
+    }
+    if (!payload.idempotency_key) {
+      const sourceRecordId = readString(payload, "source_record_id");
+      const occurredAt = readString(payload, "occurred_at");
+      if (sourceRecordId && occurredAt) {
+        payload.idempotency_key = `${sourceRecordId}:${occurredAt}`;
+      }
+    }
+
+    // Warehouse v1: idea intake is enqueue-only (no Notion fetch, no embeddings, no slow calls).
+    if (isIdeaIntakeSource(sourceTable, config)) {
+      const sourceRecordId = readString(payload, "source_record_id");
+      const occurredAt = readString(payload, "occurred_at");
+      const eventType = readString(payload, "event_type") ?? "commit_event";
+      const idempotencyKey = readString(payload, "idempotency_key");
+
+      if (!sourceRecordId || !occurredAt || !idempotencyKey) {
+        return json(400, { ok: false, result_code: "PAYLOAD_INVALID", message: "Missing required fields for idea intake." });
+      }
+
+      const notionPayload = payload as unknown as NotionLikeWebhookPayload;
+      const context = resolveProgramContext(notionPayload, config);
+      const enqueue = await persistence.warehouseEnqueueIdeaJob({
+        idempotency_key: idempotencyKey,
+        source_table: sourceTable ?? "idea_intake",
+        source_record_id: sourceRecordId,
+        event_type: eventType,
+        occurred_at: occurredAt,
+        organization_id: context.organization_id,
+        cycle_id: context.cycle_id,
+        root_problem_version_id: context.root_problem_version_id,
+      });
+
+      return json(200, {
+        ok: true,
+        ingest_state: enqueue.deduped ? "duplicate" : "processed",
+        trigger_type: "local_commit",
+        result_code: enqueue.deduped ? "DUPLICATE_SKIPPED" : "WAREHOUSE_ENQUEUED",
+        message: enqueue.deduped ? "Duplicate webhook delivery skipped." : "Idea intake accepted and queued for async processing.",
+        organization_id: context.organization_id,
+        cycle_id: context.cycle_id,
+        root_problem_version_id: context.root_problem_version_id,
+        warehouse: {
+          deduped: enqueue.deduped,
+          event_id: enqueue.event_id,
+          job_id: enqueue.job_id,
+        },
+      });
     }
 
     const result = await handleIngest(payload, { persistence, config, now });
