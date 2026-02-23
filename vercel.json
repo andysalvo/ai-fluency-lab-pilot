@@ -1,0 +1,20 @@
+{
+  "crons": [
+    { "path": "/api/cron/warehouse/ingest", "schedule": "* * * * *" },
+    { "path": "/api/cron/warehouse/embed", "schedule": "* * * * *" }
+  ],
+  "rewrites": [
+    {
+      "source": "/",
+      "destination": "/api/handler?raw_path=/"
+    },
+    {
+      "source": "/health",
+      "destination": "/api/handler?raw_path=/health"
+    },
+    {
+      "source": "/api/(.*)",
+      "destination": "/api/handler?raw_path=/api/$1"
+    }
+  ]
+}
