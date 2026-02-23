@@ -1,0 +1,18 @@
+{
+  "name": "ai-fluency-lab-pilot-runtime-slice-1",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Slice 1 cloud-shaped runtime skeleton for AI Fluency Lab pilot",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx runtime/http/local-server.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test runtime/tests/*.test.ts",
+    "backfill:idea-embeddings": "tsx scripts/backfill-idea-embeddings.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.8",
+    "tsx": "^4.20.4",
+    "typescript": "^5.8.2"
+  }
+}

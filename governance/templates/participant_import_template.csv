@@ -1,0 +1,6 @@
+# CHANGELOG (2026-02-21),Added allowlist_state column and normalized headers to match ADMIN_INTERFACES_SPEC.md,
+# NOTE,Lines beginning with # are comments and should be ignored by bulk import parser,
+email,role,initial_credits,allowlist_state,notes
+student1@example.edu,student,1,allowlisted,Week1 cohort
+student2@example.edu,student,1,allowlisted,Week1 cohort
+moderator1@example.edu,moderator,0,allowlisted,Operations reviewer
