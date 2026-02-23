@@ -124,19 +124,31 @@ function supabaseFunctionsBaseUrl(supabaseUrl: string | undefined): string | nul
 }
 
 function cronAuthorized(request: Request): boolean {
-  // Vercel Cron sends this header on scheduled runs.
+  // Some environments send this header; keep it as a fast-path, but don't rely on it.
   if (request.headers.get("x-vercel-cron") === "1") {
     return true;
   }
 
-  // Optional manual override for debugging (no secrets in git). If unset, disabled.
   if (typeof process === "undefined" || !process.env) {
     return false;
   }
-  const expected = process.env.PILOT_CRON_SECRET ?? process.env.PILOT_WAREHOUSE_CRON_TOKEN;
+
+  // Vercel Cron's standard auth is: Authorization: Bearer <CRON_SECRET>
+  // https://vercel.com/docs/cron-jobs#securing-cron-jobs
+  const expected = process.env.CRON_SECRET ?? process.env.PILOT_CRON_SECRET ?? process.env.PILOT_WAREHOUSE_CRON_TOKEN;
   if (!expected) {
     return false;
   }
+
+  const authHeader = request.headers.get("authorization") ?? request.headers.get("Authorization") ?? "";
+  if (authHeader.startsWith("Bearer ")) {
+    const token = authHeader.slice("Bearer ".length).trim();
+    if (token && token === expected) {
+      return true;
+    }
+  }
+
+  // Optional manual override for debugging (no secrets in git). If unset, disabled.
   const url = new URL(request.url);
   const secret = url.searchParams.get("secret") ?? url.searchParams.get("token");
   return Boolean(secret && secret === expected);
